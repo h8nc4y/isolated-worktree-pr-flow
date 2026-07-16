@@ -63,6 +63,10 @@ designed-but-unverified.
 
 ## Universal pre-deletion rules (any mode)
 
+- First, in any mode, confirm the PR itself is merged:
+  `gh pr view <pr-number> --repo <owner>/<name> --json state,mergedAt` must
+  report `MERGED`. The mode-specific guards above supplement this check,
+  never replace it.
 - Run every check at execution time, immediately before the deletion — not
   earlier, and never afterwards. A post-hoc check cannot un-delete a branch.
 - Remove the worktree before deleting the branch: a branch checked out in

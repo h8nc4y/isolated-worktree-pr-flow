@@ -57,6 +57,8 @@ PYTHONPATH=../_worktrees/<task>/src <repo>/.venv/bin/python -m pytest ../_worktr
 ## 3. Commit, push, open the PR
 
 ```bash
+# /tmp stands for any location you have verified writable — sandboxed agent
+# environments sometimes cannot write system temp dirs (see SKILL.md step 2).
 printf 'fix: <one-line summary>\n\n<why this change is safe and minimal>\n' > /tmp/msg-<task>.txt
 git -C ../_worktrees/<task> add <target-files-only>
 git -C ../_worktrees/<task> commit -F /tmp/msg-<task>.txt

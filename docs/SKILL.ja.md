@@ -66,7 +66,7 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
 ## 手順
 
 1. 状態確認（非破壊）。`git` は全て `-C <repo>` を付け、`gh` は全て
-   `--repo <owner>/<repo>` を付けて、カレントディレクトリ非依存にする —
+   `--repo <owner>/<name>` を付けて、カレントディレクトリ非依存にする —
    エージェント環境は呼び出しごとに作業ディレクトリがリセットされることがあり、
    repo 外の cwd では `--repo` 無しの `gh` が "not a git repository" で失敗する。
 
@@ -74,7 +74,7 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
    git -C <repo> status --short          # 作業前の WIP を記録（最後に不変を検証する）
    git -C <repo> branch --show-current
    git -C <repo> fetch origin
-   gh repo view <owner>/<repo> --json defaultBranchRef -q .defaultBranchRef.name   # 結果を以降 <default> として使う
+   gh repo view <owner>/<name> --json defaultBranchRef -q .defaultBranchRef.name   # 結果を以降 <default> として使う
    ```
 
    同じコマンドが POSIX シェルでもそのまま動く。
@@ -84,13 +84,13 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
    default が `master` のリポジトリは今も普通に存在する。
 
    ```powershell
-   git -C <repo> worktree add -b fix/<short-kebab> ..\_worktrees\<task> origin/<default>
+   git -C <repo> worktree add -b fix/<task> ..\_worktrees\<task> origin/<default>
    ```
 
    POSIX:
 
    ```bash
-   git -C <repo> worktree add -b fix/<short-kebab> ../_worktrees/<task> origin/<default>
+   git -C <repo> worktree add -b fix/<task> ../_worktrees/<task> origin/<default>
    ```
 
    置き場所は書き込み可能と確認済みの場所にする。システム共通の temp ディレクトリ
@@ -147,8 +147,8 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
    ```powershell
    git -C <worktree> add <対象ファイルのみ>
    git -C <worktree> commit -F <msgfile>
-   git -C <worktree> push -u origin fix/<short-kebab>
-   gh pr create --repo <owner>/<repo> --head fix/<short-kebab> ...
+   git -C <worktree> push -u origin fix/<task>
+   gh pr create --repo <owner>/<name> --head fix/<task> ...
    ```
 
 6. branch protection の CI は bounded ポーリングで待つ。`gh pr checks --watch`
@@ -156,8 +156,8 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
    ことがある（実測）。回数上限つきの one-shot で確認する:
 
    ```powershell
-   gh pr checks <PR番号> --repo <owner>/<repo> --watch=false
-   gh pr view <PR番号> --repo <owner>/<repo> --json state,statusCheckRollup
+   gh pr checks <PR番号> --repo <owner>/<name> --watch=false
+   gh pr view <PR番号> --repo <owner>/<name> --json state,statusCheckRollup
    ```
 
    bounded ループ（POSIX。foreground `sleep` がブロックされるハーネス — Claude
@@ -165,14 +165,14 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
    挟む）:
 
    ```bash
-   for i in $(seq 1 10); do gh pr checks <PR番号> --repo <owner>/<repo> --watch=false && break; sleep 30; done
+   for i in $(seq 1 10); do gh pr checks <PR番号> --repo <owner>/<name> --watch=false && break; sleep 30; done
    ```
 
    bounded ループ（PowerShell）:
 
    ```powershell
    for ($i = 1; $i -le 10; $i++) {
-     gh pr checks <PR番号> --repo <owner>/<repo> --watch=false
+     gh pr checks <PR番号> --repo <owner>/<name> --watch=false
      if ($LASTEXITCODE -eq 0) { break }
      Start-Sleep -Seconds 30
    }
@@ -192,8 +192,8 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
      exit 1 になる。「MERGED + headRefOid 一致」guard（安全条件 2b）を使う。
 
    ```powershell
-   gh pr merge <PR番号> --repo <owner>/<repo> --merge      # squash 運用の repo は --squash（安全条件 2b を使う）
-   gh pr view <PR番号> --repo <owner>/<repo> --json state,mergedAt,mergeCommit
+   gh pr merge <PR番号> --repo <owner>/<name> --merge      # squash 運用の repo は --squash（安全条件 2b を使う）
+   gh pr view <PR番号> --repo <owner>/<name> --json state,mergedAt,mergeCommit
    ```
 
    `gh pr merge` まわりの既知挙動（実測）:
@@ -217,7 +217,7 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
 消えてから発覚することになる（実運用の教訓）。共有 checkout では承認時点と実行時点
 で状態がドリフトし得るため、時間が空いたら直前に再実行する（実測）。
 
-1. `gh pr view <PR番号> --repo <owner>/<repo> --json state,mergedAt` が
+1. `gh pr view <PR番号> --repo <owner>/<name> --json state,mergedAt` が
    `MERGED`。
 2. merge 方式に対応した未マージ取りこぼし検証。方式を混同しない — squash 後に
    2a を使うと正しく merge 済みでも永久に通らず、squash 後の `branch -d` は
@@ -226,7 +226,7 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
    永久拒否される。
 
    - **2a — `--merge`（merge commit）方式**:
-     `git -C <repo> merge-base --is-ancestor fix/<short-kebab> origin/<default>`
+     `git -C <repo> merge-base --is-ancestor fix/<task> origin/<default>`
      が exit 0（PowerShell は `$LASTEXITCODE`、POSIX シェルは `echo $?` で確認）。
      branch 削除は `-d` — 未マージの取りこぼしがあれば git 自身が拒否してくれる
      （実測）。注意: `-d` の merged 判定は「upstream があれば upstream、なければ
@@ -236,10 +236,13 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
      だったことを確認済みであることを条件に `-D` で削除してよい — 2b と同じ
      「guard 確認後の `-D`」の型であり、guard 未実施の `-D` は引き続き不可。
    - **2b — `--squash` / `--rebase` 方式**:
-     `gh pr view <PR番号> --repo <owner>/<repo> --json state,mergeCommit,headRefOid`
-     で `state` / `mergeCommit` / `headRefOid` を取得し、次の両方を確認する:
-     (i) `git -C <repo> merge-base --is-ancestor <mergeCommit> origin/<default>`
-     が exit 0、(ii) `git -C <repo> rev-parse fix/<short-kebab>` が
+     `gh pr view <PR番号> --repo <owner>/<name> --json state,mergeCommit,headRefOid`
+     で `state` / `mergeCommit` / `headRefOid` を取得する。`mergeCommit` は
+     JSON オブジェクトで、commit ハッシュはその `oid` フィールド
+     （`-q .mergeCommit.oid` で抽出できる）。`headRefOid` は素の文字列。
+     そのうえで次の両方を確認する:
+     (i) `git -C <repo> merge-base --is-ancestor <mergeCommit-oid> origin/<default>`
+     が exit 0、(ii) `git -C <repo> rev-parse fix/<task>` が
      `headRefOid` と一致。(ii) が squash 方式における「commit の取りこぼしなし」
      の代替検証で、merge された PR の head が local branch の先端そのものである
      ことを証明する。両方通ったときのみ、意図的な `git branch -D` で削除する
@@ -267,8 +270,8 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
 ```powershell
 git -C <repo> worktree remove ..\_worktrees\<task>
 git -C <repo> worktree prune
-git -C <repo> branch -d fix/<short-kebab>          # 2a（--merge）方式。not fully merged 拒否なら 2a の注意（is-ancestor 確認後の -D）。2b 方式は guard 確認済みの場合のみ -D
-git -C <repo> push origin --delete fix/<short-kebab>   # remote に残っていれば
+git -C <repo> branch -d fix/<task>          # 2a（--merge）方式。not fully merged 拒否なら 2a の注意（is-ancestor 確認後の -D）。2b 方式は guard 確認済みの場合のみ -D
+git -C <repo> push origin --delete fix/<task>   # remote に残っていれば
 git -C <repo> remote prune origin
 ```
 
@@ -306,7 +309,7 @@ git -C <repo> remote prune origin
 
 ## 完了チェック
 
-- `gh pr view <PR番号> --repo <owner>/<repo> --json state,mergeCommit` で
+- `gh pr view <PR番号> --repo <owner>/<name> --json state,mergeCommit` で
   `MERGED` と merge commit を記録した。
 - `git -C <repo> worktree list` に一時 worktree が残っていない。
 - local / remote に作業 branch が残っていない（branch を残す方針のリポジトリは
@@ -315,7 +318,7 @@ git -C <repo> remote prune origin
 
 ## 報告
 
-- 報告はタイムスタンプ（日付・時刻・タイムゾーン明記)で始めることを推奨する。
+- 報告はタイムスタンプ（日付・時刻・タイムゾーン明記）で始める。
 - 含める内容: worktree の作成場所、PR URL、merge 方式と merge commit、CI 結果
   （one-shot poll の回数と最終状態）、cleanup の実施内容、main checkout 不変の
   証跡（status 比較）、未確認事項。

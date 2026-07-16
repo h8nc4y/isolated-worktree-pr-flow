@@ -85,7 +85,7 @@ equivalents noted inline.
 ## Procedure
 
 1. Check state, non-destructively. Run every `git` command with `-C <repo>`
-   and every `gh` command with `--repo <owner>/<repo>`, so nothing depends on
+   and every `gh` command with `--repo <owner>/<name>`, so nothing depends on
    the current directory — agent environments may reset the working directory
    between calls, and without `--repo`, `gh` fails with "not a git
    repository" when invoked outside the repo.
@@ -94,7 +94,7 @@ equivalents noted inline.
    git -C <repo> status --short          # record pre-work WIP (verified unchanged at the end)
    git -C <repo> branch --show-current
    git -C <repo> fetch origin
-   gh repo view <owner>/<repo> --json defaultBranchRef -q .defaultBranchRef.name   # use the result as <default> below
+   gh repo view <owner>/<name> --json defaultBranchRef -q .defaultBranchRef.name   # use the result as <default> below
    ```
 
    The same commands work unchanged in POSIX shells.
@@ -104,13 +104,13 @@ equivalents noted inline.
    hardcode `main`; repositories whose default is `master` are still common.
 
    ```powershell
-   git -C <repo> worktree add -b fix/<short-kebab> ..\_worktrees\<task> origin/<default>
+   git -C <repo> worktree add -b fix/<task> ..\_worktrees\<task> origin/<default>
    ```
 
    POSIX:
 
    ```bash
-   git -C <repo> worktree add -b fix/<short-kebab> ../_worktrees/<task> origin/<default>
+   git -C <repo> worktree add -b fix/<task> ../_worktrees/<task> origin/<default>
    ```
 
    Put the worktree somewhere confirmed writable. System-wide temp
@@ -171,8 +171,8 @@ equivalents noted inline.
    ```powershell
    git -C <worktree> add <target files only>
    git -C <worktree> commit -F <msgfile>
-   git -C <worktree> push -u origin fix/<short-kebab>
-   gh pr create --repo <owner>/<repo> --head fix/<short-kebab> ...
+   git -C <worktree> push -u origin fix/<task>
+   gh pr create --repo <owner>/<name> --head fix/<task> ...
    ```
 
 6. Wait for branch-protection CI with bounded polling. `gh pr checks
@@ -181,22 +181,23 @@ equivalents noted inline.
    cap:
 
    ```powershell
-   gh pr checks <pr-number> --repo <owner>/<repo> --watch=false
-   gh pr view <pr-number> --repo <owner>/<repo> --json state,statusCheckRollup
+   gh pr checks <pr-number> --repo <owner>/<name> --watch=false
+   gh pr view <pr-number> --repo <owner>/<name> --json state,statusCheckRollup
    ```
 
-   Bounded loop, POSIX (also usable from a background task where the harness
-   blocks foreground `sleep` — Claude Code does):
+   Bounded loop, POSIX. Where the harness blocks foreground `sleep` (Claude
+   Code does), run the loop as a background task, or skip the loop and
+   interleave one-shot checks between other pieces of work:
 
    ```bash
-   for i in $(seq 1 10); do gh pr checks <pr-number> --repo <owner>/<repo> --watch=false && break; sleep 30; done
+   for i in $(seq 1 10); do gh pr checks <pr-number> --repo <owner>/<name> --watch=false && break; sleep 30; done
    ```
 
    Bounded loop, PowerShell:
 
    ```powershell
    for ($i = 1; $i -le 10; $i++) {
-     gh pr checks <pr-number> --repo <owner>/<repo> --watch=false
+     gh pr checks <pr-number> --repo <owner>/<name> --watch=false
      if ($LASTEXITCODE -eq 0) { break }
      Start-Sleep -Seconds 30
    }
@@ -217,8 +218,8 @@ equivalents noted inline.
      guard instead (safety condition 2b).
 
    ```powershell
-   gh pr merge <pr-number> --repo <owner>/<repo> --merge      # squash-policy repos: --squash, then use guard 2b
-   gh pr view <pr-number> --repo <owner>/<repo> --json state,mergedAt,mergeCommit
+   gh pr merge <pr-number> --repo <owner>/<name> --merge      # squash-policy repos: --squash, then use guard 2b
+   gh pr view <pr-number> --repo <owner>/<name> --json state,mergedAt,mergeCommit
    ```
 
    Known behaviors around `gh pr merge` (field-tested):
@@ -246,7 +247,7 @@ once the branch is already gone (field lesson). In shared checkouts, state
 can drift between when a step was approved and when it runs; if time has
 passed, re-run the checks immediately before executing (field-tested).
 
-1. `gh pr view <pr-number> --repo <owner>/<repo> --json state,mergedAt`
+1. `gh pr view <pr-number> --repo <owner>/<name> --json state,mergedAt`
    reports `MERGED`.
 2. Merge-mode-matched unmerged-work verification. Do not mix the modes: after
    a squash, guard 2a never passes even for a correctly merged PR; and
@@ -255,7 +256,7 @@ passed, re-run the checks immediately before executing (field-tested).
    or is refused forever as "not fully merged" (if the upstream is gone).
 
    - **2a — `--merge` (merge commit) mode**:
-     `git -C <repo> merge-base --is-ancestor fix/<short-kebab> origin/<default>`
+     `git -C <repo> merge-base --is-ancestor fix/<task> origin/<default>`
      exits 0 (check `$LASTEXITCODE` in PowerShell, `echo $?` in POSIX
      shells). Delete the branch with `-d`, so git itself still refuses if
      anything was left unmerged (field-tested). Caveat: `-d` judges "merged"
@@ -268,10 +269,12 @@ passed, re-run the checks immediately before executing (field-tested).
      guard-then-`-D` shape as 2b; a `-D` without the guard stays forbidden.
    - **2b — `--squash` / `--rebase` mode**: fetch `state`, `mergeCommit`, and
      `headRefOid` via
-     `gh pr view <pr-number> --repo <owner>/<repo> --json state,mergeCommit,headRefOid`,
-     then confirm both: (i)
-     `git -C <repo> merge-base --is-ancestor <mergeCommit> origin/<default>`
-     exits 0, and (ii) `git -C <repo> rev-parse fix/<short-kebab>` equals
+     `gh pr view <pr-number> --repo <owner>/<name> --json state,mergeCommit,headRefOid`.
+     Note that `mergeCommit` is a JSON object — the commit hash is its `oid`
+     field (`-q .mergeCommit.oid` extracts it); `headRefOid` is a plain
+     string. Then confirm both: (i)
+     `git -C <repo> merge-base --is-ancestor <mergeCommit-oid> origin/<default>`
+     exits 0, and (ii) `git -C <repo> rev-parse fix/<task>` equals
      `headRefOid`. Check (ii) is the squash-mode replacement for "no commits
      left behind": it proves the merged PR head is exactly your local branch
      tip. Only when both hold, delete with an explicit `git branch -D` (this
@@ -301,8 +304,8 @@ Only after all checks pass:
 ```powershell
 git -C <repo> worktree remove ..\_worktrees\<task>
 git -C <repo> worktree prune
-git -C <repo> branch -d fix/<short-kebab>          # 2a (--merge) mode; on a not-fully-merged refusal apply the 2a caveat (verified is-ancestor, then -D); 2b mode uses -D only after its guard
-git -C <repo> push origin --delete fix/<short-kebab>   # if the remote branch remains
+git -C <repo> branch -d fix/<task>          # 2a (--merge) mode; on a not-fully-merged refusal apply the 2a caveat (verified is-ancestor, then -D); 2b mode uses -D only after its guard
+git -C <repo> push origin --delete fix/<task>   # if the remote branch remains
 git -C <repo> remote prune origin
 ```
 
@@ -345,7 +348,7 @@ Troubleshooting removal:
 
 ## Completion Checklist
 
-- `gh pr view <pr-number> --repo <owner>/<repo> --json state,mergeCommit`
+- `gh pr view <pr-number> --repo <owner>/<name> --json state,mergeCommit`
   recorded `MERGED` and the merge commit.
 - `git -C <repo> worktree list` shows no leftover temporary worktree.
 - The work branch is gone locally and remotely (unless the repository's
