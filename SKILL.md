@@ -258,7 +258,14 @@ passed, re-run the checks immediately before executing (field-tested).
      `git -C <repo> merge-base --is-ancestor fix/<short-kebab> origin/<default>`
      exits 0 (check `$LASTEXITCODE` in PowerShell, `echo $?` in POSIX
      shells). Delete the branch with `-d`, so git itself still refuses if
-     anything was left unmerged (field-tested).
+     anything was left unmerged (field-tested). Caveat: `-d` judges "merged"
+     against the branch's upstream if one is set, otherwise against HEAD —
+     so after the remote branch is deleted and pruned, and with the
+     checkout's HEAD sitting on an older, unrelated branch, `-d` can refuse
+     with `not fully merged` even though the PR merged correctly
+     (field-tested). In that case deleting with `-D` is acceptable only
+     immediately after the `--is-ancestor` check exited 0 — the same
+     guard-then-`-D` shape as 2b; a `-D` without the guard stays forbidden.
    - **2b — `--squash` / `--rebase` mode**: fetch `state`, `mergeCommit`, and
      `headRefOid` via
      `gh pr view <pr-number> --repo <owner>/<repo> --json state,mergeCommit,headRefOid`,
@@ -294,7 +301,7 @@ Only after all checks pass:
 ```powershell
 git -C <repo> worktree remove ..\_worktrees\<task>
 git -C <repo> worktree prune
-git -C <repo> branch -d fix/<short-kebab>          # 2a (--merge) mode; in 2b (squash/rebase) mode use -D only after the guard passed
+git -C <repo> branch -d fix/<short-kebab>          # 2a (--merge) mode; on a not-fully-merged refusal apply the 2a caveat (verified is-ancestor, then -D); 2b mode uses -D only after its guard
 git -C <repo> push origin --delete fix/<short-kebab>   # if the remote branch remains
 git -C <repo> remote prune origin
 ```
@@ -303,6 +310,10 @@ git -C <repo> remote prune origin
 
 Troubleshooting removal:
 
+- The cleanup order matters: remove the worktree before deleting the branch.
+  A branch still checked out in any worktree is refused deletion by both
+  `-d` and `-D` with `used by worktree` — that is git's protection working,
+  and it is a different refusal than `not fully merged` (field-tested).
 - If `git worktree remove` refuses because of untracked content, do not
   reach for `--force`. Identify what is actually there — a leftover link, a
   build artifact, a deliverable you forgot to move out — and handle each

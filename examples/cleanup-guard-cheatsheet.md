@@ -21,6 +21,12 @@ git -C <repo> branch -d fix/<task>
 `-d` is intentional: if anything was left unmerged, git itself refuses.
 (Field-tested.)
 
+Caveat: `-d` judges "merged" against the branch's upstream if set, otherwise
+against HEAD. After the remote branch is deleted and pruned, with HEAD on an
+older unrelated branch, `-d` can refuse `not fully merged` even for a
+correctly merged PR (field-tested). Delete with `-D` only immediately after
+the `--is-ancestor` check above exited 0 — never without it.
+
 ## Guard 2b — after `gh pr merge --squash` or `--rebase`
 
 ```bash
@@ -59,6 +65,9 @@ designed-but-unverified.
 
 - Run every check at execution time, immediately before the deletion — not
   earlier, and never afterwards. A post-hoc check cannot un-delete a branch.
+- Remove the worktree before deleting the branch: a branch checked out in
+  any worktree is refused by both `-d` and `-D` with `used by worktree` — a
+  different (and correct) refusal, unrelated to merge state.
 - Confirm the worktree/branch you are deleting is one this flow created.
 - Confirm the main checkout's `git status --short` still matches your
   pre-work record.

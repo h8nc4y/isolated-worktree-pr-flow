@@ -229,7 +229,12 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
      `git -C <repo> merge-base --is-ancestor fix/<short-kebab> origin/<default>`
      が exit 0（PowerShell は `$LASTEXITCODE`、POSIX シェルは `echo $?` で確認）。
      branch 削除は `-d` — 未マージの取りこぼしがあれば git 自身が拒否してくれる
-     （実測）。
+     （実測）。注意: `-d` の merged 判定は「upstream があれば upstream、なければ
+     HEAD」基準のため、remote branch 削除 + prune の後で、かつ checkout の HEAD が
+     古い別ブランチに載っていると、正しく merge 済みでも `not fully merged` で
+     拒否されることがある（実測）。この場合は、直前の `--is-ancestor` が exit 0
+     だったことを確認済みであることを条件に `-D` で削除してよい — 2b と同じ
+     「guard 確認後の `-D`」の型であり、guard 未実施の `-D` は引き続き不可。
    - **2b — `--squash` / `--rebase` 方式**:
      `gh pr view <PR番号> --repo <owner>/<repo> --json state,mergeCommit,headRefOid`
      で `state` / `mergeCommit` / `headRefOid` を取得し、次の両方を確認する:
@@ -262,7 +267,7 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
 ```powershell
 git -C <repo> worktree remove ..\_worktrees\<task>
 git -C <repo> worktree prune
-git -C <repo> branch -d fix/<short-kebab>          # 2a（--merge）方式。2b（squash/rebase）方式は guard 確認済みの場合のみ -D
+git -C <repo> branch -d fix/<short-kebab>          # 2a（--merge）方式。not fully merged 拒否なら 2a の注意（is-ancestor 確認後の -D）。2b 方式は guard 確認済みの場合のみ -D
 git -C <repo> push origin --delete fix/<short-kebab>   # remote に残っていれば
 git -C <repo> remote prune origin
 ```
@@ -271,6 +276,10 @@ git -C <repo> remote prune origin
 
 削除まわりのトラブルシュート:
 
+- cleanup の順序が重要: branch 削除の前に worktree を remove する。いずれかの
+  worktree で checkout 中の branch は、`-d` / `-D` のどちらでも `used by
+  worktree` で削除拒否される — これは git の防御が正しく機能している状態であり、
+  `not fully merged` とは別種の拒否（実測）。
 - `git worktree remove` が未追跡物ありで拒否されたら、安易に `--force` へ
   逃げない。実際に何が残っているか — 外し忘れのリンク・ビルド生成物・退避し
   忘れの成果物 — を確認し、個別に対処してから再実行する。
