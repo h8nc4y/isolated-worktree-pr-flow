@@ -6,6 +6,17 @@ The format loosely follows Keep a Changelog conventions.
 
 ## Unreleased
 
+### Added
+
+- A disposable-Git-history regression test for cleanup guards 2a and 2b,
+  covering merge, squash, rebase, an unlanded merge-result commit, and a
+  local branch advanced beyond the merged PR head. The fixture isolates Git
+  configuration, signing, hooks, and `rebase.updateRefs`; snapshots, clears,
+  and restores every ambient `GIT_*` variable to prevent repository or trace
+  redirection; validates its OS-aware recursive-cleanup boundary and
+  reparse-point rejection; and runs on PowerShell 7 and Windows PowerShell
+  5.1 in CI.
+
 ## 0.1.0 - 2026-07-16
 
 ### Added

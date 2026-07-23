@@ -191,9 +191,9 @@ worktree を切って PR を作るための手順です。
 
 ## Limitations
 
-- The squash/rebase cleanup guard (2b) is derived from git's merge semantics
-  but has not yet been validated in live operation; the skill marks it
-  explicitly as designed-but-unverified.
+- The squash/rebase cleanup guard (2b) has disposable synthetic-Git coverage
+  for its topology and rejection paths, but its real GitHub merge and cleanup
+  operation has not yet been measured; the skill keeps that boundary explicit.
 - Whether recursive deletion follows directory junctions or symlinks varies
   by platform, tool, and version (unverified); the skill's rule is to remove
   links explicitly instead of relying on that behavior.
@@ -213,6 +213,7 @@ Run the full local validation from the repository root:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate-oss-readiness.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-cleanup-guards.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-scan-private-markers.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\scan-private-markers.ps1
 ```
@@ -221,6 +222,7 @@ If `pwsh` is available, the same checks can be run with:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\validate-oss-readiness.ps1
+pwsh -NoProfile -File .\scripts\test-cleanup-guards.ps1
 pwsh -NoProfile -File .\scripts\test-scan-private-markers.ps1
 pwsh -NoProfile -File .\scripts\scan-private-markers.ps1
 ```
@@ -229,9 +231,22 @@ On macOS, Linux, or any POSIX shell with PowerShell 7 (`pwsh`) installed:
 
 ```bash
 pwsh -NoProfile -File ./scripts/validate-oss-readiness.ps1
+pwsh -NoProfile -File ./scripts/test-cleanup-guards.ps1
 pwsh -NoProfile -File ./scripts/test-scan-private-markers.ps1
 pwsh -NoProfile -File ./scripts/scan-private-markers.ps1
 ```
+
+The cleanup-guard regression test builds disposable local Git histories for
+merge, squash, and rebase topology. It verifies the positive 2a/2b decisions
+and the two 2b rejection paths without using GitHub, credentials, or a real
+repository. Each Git invocation ignores system/global configuration, signing,
+hooks, and `rebase.updateRefs`; it snapshots and clears every ambient `GIT_*`
+variable before setting only its isolated config and non-interactive prompt
+policy. This prevents repository/index/object redirection and trace output to
+caller-selected paths, including future Git variables not yet known to the
+test. Recursive cleanup requires an OS-aware, direct GUID-named child of the
+temporary directory and rejects reparse points. CI executes the test with
+both PowerShell 7 and Windows PowerShell 5.1.
 
 Also run Git whitespace checks on your working changes before publishing:
 
@@ -239,9 +254,9 @@ Also run Git whitespace checks on your working changes before publishing:
 git diff --check
 ```
 
-The GitHub Actions workflow runs the same validation, scan self-test,
-private-marker scan, and whitespace check on pull requests and pushes to
-`main`.
+The GitHub Actions workflow runs the same validation, both cleanup-guard
+runtime variants, scan self-test, private-marker scan, and whitespace check on
+pull requests and pushes to `main`.
 
 ## Contributing
 

@@ -279,9 +279,15 @@ passed, re-run the checks immediately before executing (field-tested).
      left behind": it proves the merged PR head is exactly your local branch
      tip. Only when both hold, delete with an explicit `git branch -D` (this
      guard substitutes for `-d`).
-     Honesty note: guard 2b is derived from git's squash/rebase semantics
-     (squash merges never make branch commits ancestors); it has not yet been
-     validated in live operation. Treat it as designed-but-unverified.
+     Guard 2b's topology and rejection paths are covered by disposable
+     synthetic Git histories in `scripts/test-cleanup-guards.ps1`. The test
+     isolates system/global Git configuration, hooks, signing, and
+     `rebase.updateRefs`; snapshots, clears, and restores every ambient
+     `GIT_*` variable so repository/trace paths cannot escape the fixture; and
+     constrains recursive cleanup to its generated direct temp child with
+     OS-aware path comparison and reparse-point rejection. A real GitHub
+     squash/rebase merge and cleanup has not yet been measured, so keep the
+     GitHub-side operation marked as unverified.
 
 3. The worktree and branch being deleted are ones this flow created — never
    another agent's or a human's.
@@ -372,7 +378,8 @@ This skill is distilled from repeated real-world agent operations on shared
 Windows development machines — every rule above traces back to an observed
 failure or a verified recovery, not to speculation. Wording like
 "field-tested" marks behavior that was actually hit and worked around in
-practice. Items that are design-derived but not yet validated in live
-operation are explicitly marked as unverified — notably the squash/rebase
-cleanup guard (2b) and platform-specific link-following behavior during
-recursive deletion.
+practice. Items that are not yet validated in live operation are explicitly
+marked as unverified — notably guard 2b's GitHub-side squash/rebase operation
+(its local Git topology and rejection paths do have synthetic regression
+coverage) and platform-specific link-following behavior during recursive
+deletion.
