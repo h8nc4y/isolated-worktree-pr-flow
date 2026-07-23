@@ -46,6 +46,7 @@ From the repository root, run:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate-oss-readiness.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-cleanup-guards.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-scan-private-markers.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\scan-private-markers.ps1
 git diff --check
@@ -55,6 +56,7 @@ If `pwsh` is available, it is also acceptable for the PowerShell scripts:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\validate-oss-readiness.ps1
+pwsh -NoProfile -File .\scripts\test-cleanup-guards.ps1
 pwsh -NoProfile -File .\scripts\test-scan-private-markers.ps1
 pwsh -NoProfile -File .\scripts\scan-private-markers.ps1
 ```
@@ -64,9 +66,16 @@ forward slashes:
 
 ```bash
 pwsh -NoProfile -File ./scripts/validate-oss-readiness.ps1
+pwsh -NoProfile -File ./scripts/test-cleanup-guards.ps1
 pwsh -NoProfile -File ./scripts/test-scan-private-markers.ps1
 pwsh -NoProfile -File ./scripts/scan-private-markers.ps1
 ```
+
+CI keeps the cleanup-guard test active on both PowerShell 7 and Windows
+PowerShell 5.1. The test isolates every synthetic Git invocation from
+system/global configuration, hooks, and signing; fixes
+`rebase.updateRefs=false`; and snapshots, clears, then restores every ambient
+`GIT_*` variable.
 
 ## Pull Request Expectations
 

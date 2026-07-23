@@ -44,9 +44,12 @@ git -C <repo> rev-parse fix/<task>    # require: equals headRefOid
 git -C <repo> branch -D fix/<task>
 ```
 
-Honesty note: guard 2b is derived from git's squash/rebase semantics; it has
-not yet been validated in live operation. Treat it as
-designed-but-unverified.
+The local topology and rejection paths are regression-tested with disposable
+synthetic Git histories isolated from machine/user Git configuration, hooks,
+signing, and `rebase.updateRefs`. Every ambient `GIT_*` variable is
+snapshotted, cleared, and restored so repository and trace paths cannot escape
+the fixture. A real GitHub squash/rebase merge and cleanup has not yet been
+measured, so keep the GitHub-side operation marked as unverified.
 
 ## What goes wrong when you mix them
 

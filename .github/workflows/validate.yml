@@ -24,6 +24,14 @@ jobs:
         shell: pwsh
         run: ./scripts/validate-oss-readiness.ps1
 
+      - name: Test cleanup guards (PowerShell 7)
+        shell: pwsh
+        run: ./scripts/test-cleanup-guards.ps1
+
+      - name: Test cleanup guards (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./scripts/test-cleanup-guards.ps1
+
       - name: Test private marker scan
         shell: pwsh
         run: ./scripts/test-scan-private-markers.ps1

@@ -247,9 +247,13 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
      の代替検証で、merge された PR の head が local branch の先端そのものである
      ことを証明する。両方通ったときのみ、意図的な `git branch -D` で削除する
      （この guard が `-d` の代替）。
-     誠実性の注記: guard 2b は git の squash/rebase セマンティクス（squash merge
-     は branch commit を ancestor にしない）から設計したもので、実運用での検証は
-     未確認。designed-but-unverified として扱うこと。
+     guard 2b の履歴形状と拒否経路は `scripts/test-cleanup-guards.ps1` の
+     使い捨て合成 Git 履歴で回帰検証する。このテストは system/global Git config、
+     hook、署名、`rebase.updateRefs` を隔離し、ambient な `GIT_*` 環境変数を全て
+     snapshot・消去・復元するため、repo や trace の path は fixture 外へ逃げない。
+     再帰 cleanup は OS 別の path 比較で生成した temp 直下の GUID 子だけに制限し、
+     reparse point を拒否する。実際の GitHub squash/rebase merge と cleanup は
+     まだ実測していないため、GitHub 側の操作は未確認として扱う。
 
 3. 消す対象の worktree / branch が「このフローで自分が作った」ものであること —
    他エージェントや人間のものは消さない。
@@ -330,6 +334,7 @@ git -C <repo> remote prune origin
 この skill は、共有された Windows 開発マシン上でのエージェント駆動開発の実運用から
 蒸留したものです — 上記の各ルールは、実際に観測された失敗か検証済みのリカバリに
 遡れます（推測由来のルールはありません）。「実測」「実運用の教訓」と書かれた項目は
-実際に踏んで回避した挙動を指します。設計由来でまだ実運用検証がない項目は明示的に
-「未確認」と記しています — 特に squash/rebase 方式の cleanup guard（2b）と、再帰
-削除のリンク追従挙動のプラットフォーム差。
+実際に踏んで回避した挙動を指します。まだ実運用検証がない項目は明示的に
+「未確認」と記しています — 特に guard 2b の GitHub 側 squash/rebase 操作
+（local Git の履歴形状と拒否経路は合成回帰テストあり）と、再帰削除のリンク追従
+挙動のプラットフォーム差。

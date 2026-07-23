@@ -56,6 +56,80 @@ function Assert-FileContains {
     }
 }
 
+function Get-WorkflowSteps {
+    param(
+        [string]$RelativePath
+    )
+
+    $filePath = Get-RepoFilePath -RelativePath $RelativePath
+    if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+        Add-Failure "Cannot inspect missing workflow file: $RelativePath"
+        return @()
+    }
+
+    $steps = New-Object System.Collections.Generic.List[object]
+    $currentStep = $null
+
+    foreach ($line in Get-Content -LiteralPath $filePath) {
+        $nameMatch = [regex]::Match($line, '^[ \t]*-[ \t]+name:[ \t]*(?<value>[^#\r\n]+?)[ \t]*$')
+        if ($nameMatch.Success) {
+            if ($null -ne $currentStep) {
+                $steps.Add($currentStep) | Out-Null
+            }
+            $currentStep = [pscustomobject]@{
+                Name = $nameMatch.Groups['value'].Value.Trim("'`"")
+                Shell = ''
+                Run = ''
+            }
+            continue
+        }
+
+        if ($null -eq $currentStep) {
+            continue
+        }
+
+        $shellMatch = [regex]::Match($line, '^[ \t]+shell:[ \t]*(?<value>[^#\r\n]+?)[ \t]*$')
+        if ($shellMatch.Success) {
+            $currentStep.Shell = $shellMatch.Groups['value'].Value.Trim("'`"")
+            continue
+        }
+
+        $runMatch = [regex]::Match($line, '^[ \t]+run:[ \t]*(?<value>[^#\r\n]+?)[ \t]*$')
+        if ($runMatch.Success) {
+            $currentStep.Run = $runMatch.Groups['value'].Value.Trim("'`"")
+        }
+    }
+
+    if ($null -ne $currentStep) {
+        $steps.Add($currentStep) | Out-Null
+    }
+
+    return $steps.ToArray()
+}
+
+function Assert-WorkflowStep {
+    param(
+        [object[]]$Steps,
+        [string]$Name,
+        [string]$Shell,
+        [string]$Run
+    )
+
+    $matches = @($Steps | Where-Object { $_.Name -ceq $Name })
+    if ($matches.Count -ne 1) {
+        Add-Failure "Workflow must contain exactly one active step named '$Name' (found $($matches.Count))"
+        return
+    }
+
+    $step = $matches[0]
+    if (-not $step.Shell.Equals($Shell, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Add-Failure "Workflow step '$Name' must use shell '$Shell' (found '$($step.Shell)')"
+    }
+    if ($step.Run -cne $Run) {
+        Add-Failure "Workflow step '$Name' must run '$Run' (found '$($step.Run)')"
+    }
+}
+
 function Test-SkillFrontmatter {
     $skillPath = Get-RepoFilePath -RelativePath 'SKILL.md'
     if (-not (Test-Path -LiteralPath $skillPath -PathType Leaf)) {
@@ -113,6 +187,7 @@ $requiredFiles = @(
     'examples/cleanup-guard-cheatsheet.md',
     'examples/concurrent-session-collision-checklist.md',
     'scripts/scan-private-markers.ps1',
+    'scripts/test-cleanup-guards.ps1',
     'scripts/test-scan-private-markers.ps1',
     'scripts/validate-oss-readiness.ps1'
 )
@@ -131,9 +206,17 @@ Assert-FileContains -RelativePath 'README.md' -Pattern 'docs/SKILL\.ja\.md' -Des
 Assert-FileContains -RelativePath '.gitignore' -Pattern '\.private-markers\.local' -Description 'ignore local private marker files'
 Assert-FileContains -RelativePath 'CONTRIBUTING.md' -Pattern '(?im)no token|never.*token|secret' -Description 'secret-safe contribution guidance'
 Assert-FileContains -RelativePath 'SECURITY.md' -Pattern '(?im)do not.*public|private|security' -Description 'private vulnerability reporting guidance'
-Assert-FileContains -RelativePath '.github/workflows/validate.yml' -Pattern 'validate-oss-readiness\.ps1' -Description 'OSS readiness validation in CI'
-Assert-FileContains -RelativePath '.github/workflows/validate.yml' -Pattern 'scan-private-markers\.ps1' -Description 'private marker scan in CI'
-Assert-FileContains -RelativePath '.github/workflows/validate.yml' -Pattern 'test-scan-private-markers\.ps1' -Description 'private marker scan self-test in CI'
+$workflowSteps = Get-WorkflowSteps -RelativePath '.github/workflows/validate.yml'
+Assert-WorkflowStep -Steps $workflowSteps -Name 'Validate OSS readiness' `
+    -Shell 'pwsh' -Run './scripts/validate-oss-readiness.ps1'
+Assert-WorkflowStep -Steps $workflowSteps -Name 'Test cleanup guards (PowerShell 7)' `
+    -Shell 'pwsh' -Run './scripts/test-cleanup-guards.ps1'
+Assert-WorkflowStep -Steps $workflowSteps -Name 'Test cleanup guards (Windows PowerShell 5.1)' `
+    -Shell 'powershell' -Run './scripts/test-cleanup-guards.ps1'
+Assert-WorkflowStep -Steps $workflowSteps -Name 'Test private marker scan' `
+    -Shell 'pwsh' -Run './scripts/test-scan-private-markers.ps1'
+Assert-WorkflowStep -Steps $workflowSteps -Name 'Scan for private markers' `
+    -Shell 'pwsh' -Run './scripts/scan-private-markers.ps1'
 
 Test-SkillFrontmatter
 
