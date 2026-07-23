@@ -252,8 +252,11 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
      hook、署名、`rebase.updateRefs` を隔離し、ambient な `GIT_*` 環境変数を全て
      snapshot・消去・復元するため、repo や trace の path は fixture 外へ逃げない。
      再帰 cleanup は OS 別の path 比較で生成した temp 直下の GUID 子だけに制限し、
-     reparse point を拒否する。実際の GitHub squash/rebase merge と cleanup は
-     まだ実測していないため、GitHub 側の操作は未確認として扱う。
+     reparse point を拒否する。GitHub の live squash 経路は 2026-07-23 に
+     [PR #2](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/2) で実測し、
+     `MERGED`、default branch に入った `mergeCommit`、local / remote の先端と
+     `headRefOid` の一致、guard 後の local `-D` と明示的な remote 削除が全て通った。
+     GitHub の live rebase cleanup は未確認。
 
 3. 消す対象の worktree / branch が「このフローで自分が作った」ものであること —
    他エージェントや人間のものは消さない。
@@ -335,6 +338,6 @@ git -C <repo> remote prune origin
 蒸留したものです — 上記の各ルールは、実際に観測された失敗か検証済みのリカバリに
 遡れます（推測由来のルールはありません）。「実測」「実運用の教訓」と書かれた項目は
 実際に踏んで回避した挙動を指します。まだ実運用検証がない項目は明示的に
-「未確認」と記しています — 特に guard 2b の GitHub 側 squash/rebase 操作
-（local Git の履歴形状と拒否経路は合成回帰テストあり）と、再帰削除のリンク追従
-挙動のプラットフォーム差。
+「未確認」と記しています — 特に guard 2b の GitHub 側 rebase 操作（squash
+経路は live 実測済みで、両方式の local Git 履歴形状と拒否経路は合成回帰テスト
+あり）と、再帰削除のリンク追従挙動のプラットフォーム差。

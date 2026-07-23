@@ -285,9 +285,12 @@ passed, re-run the checks immediately before executing (field-tested).
      `rebase.updateRefs`; snapshots, clears, and restores every ambient
      `GIT_*` variable so repository/trace paths cannot escape the fixture; and
      constrains recursive cleanup to its generated direct temp child with
-     OS-aware path comparison and reparse-point rejection. A real GitHub
-     squash/rebase merge and cleanup has not yet been measured, so keep the
-     GitHub-side operation marked as unverified.
+     OS-aware path comparison and reparse-point rejection. The live GitHub
+     squash path was measured on 2026-07-23 with
+     [PR #2](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/2):
+     `MERGED`, landed `mergeCommit`, unchanged local and remote tips matching
+     `headRefOid`, guarded local `-D`, and explicit remote deletion all passed.
+     Live GitHub rebase cleanup remains unverified.
 
 3. The worktree and branch being deleted are ones this flow created — never
    another agent's or a human's.
@@ -379,7 +382,7 @@ Windows development machines — every rule above traces back to an observed
 failure or a verified recovery, not to speculation. Wording like
 "field-tested" marks behavior that was actually hit and worked around in
 practice. Items that are not yet validated in live operation are explicitly
-marked as unverified — notably guard 2b's GitHub-side squash/rebase operation
-(its local Git topology and rejection paths do have synthetic regression
-coverage) and platform-specific link-following behavior during recursive
-deletion.
+marked as unverified — notably guard 2b's GitHub-side rebase operation (the
+squash path is live-verified, and both local topologies and rejection paths
+have synthetic regression coverage) and platform-specific link-following
+behavior during recursive deletion.

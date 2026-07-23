@@ -192,8 +192,12 @@ worktree を切って PR を作るための手順です。
 ## Limitations
 
 - The squash/rebase cleanup guard (2b) has disposable synthetic-Git coverage
-  for its topology and rejection paths, but its real GitHub merge and cleanup
-  operation has not yet been measured; the skill keeps that boundary explicit.
+  for its topology and rejection paths. Its live GitHub squash path was
+  measured on 2026-07-23 with
+  [PR #2](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/2):
+  `MERGED`, landed `mergeCommit`, unchanged tips matching `headRefOid`, and
+  guarded local/remote cleanup all passed. Live GitHub rebase cleanup remains
+  unverified.
 - Whether recursive deletion follows directory junctions or symlinks varies
   by platform, tool, and version (unverified); the skill's rule is to remove
   links explicitly instead of relying on that behavior.

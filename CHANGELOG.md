@@ -17,6 +17,14 @@ The format loosely follows Keep a Changelog conventions.
   reparse-point rejection; and runs on PowerShell 7 and Windows PowerShell
   5.1 in CI.
 
+### Changed
+
+- Recorded live GitHub squash-merge cleanup evidence from
+  [PR #2](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/2):
+  `MERGED` state, landed `mergeCommit`, unchanged local and remote tips
+  matching `headRefOid`, guarded local `-D`, and explicit remote-branch
+  deletion. Live GitHub rebase-merge cleanup remains unverified.
+
 ## 0.1.0 - 2026-07-16
 
 ### Added

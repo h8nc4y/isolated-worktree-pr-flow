@@ -48,8 +48,11 @@ The local topology and rejection paths are regression-tested with disposable
 synthetic Git histories isolated from machine/user Git configuration, hooks,
 signing, and `rebase.updateRefs`. Every ambient `GIT_*` variable is
 snapshotted, cleared, and restored so repository and trace paths cannot escape
-the fixture. A real GitHub squash/rebase merge and cleanup has not yet been
-measured, so keep the GitHub-side operation marked as unverified.
+the fixture. The live GitHub squash path was measured on 2026-07-23 with
+[PR #2](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/2):
+`MERGED`, landed `mergeCommit`, unchanged tips matching `headRefOid`, and
+guarded local/remote cleanup all passed. Live GitHub rebase cleanup remains
+unverified.
 
 ## What goes wrong when you mix them
 
