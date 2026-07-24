@@ -17,7 +17,9 @@ verify.
 - Use synthetic placeholders such as `<repo>`, `<owner>/<name>`, `<task>`,
   and `<pr-number>` for examples.
 - Put personal or organization-specific scan markers in an untracked
-  `.private-markers.local` file, not in repository source.
+  `.private-markers.local` file, not in repository source. The scanner fails
+  closed if that file appears in the Git index and never prints matched marker
+  values.
 
 ## Grounding Rules
 
@@ -76,6 +78,15 @@ PowerShell 5.1. The test isolates every synthetic Git invocation from
 system/global configuration, hooks, and signing; fixes
 `rebase.updateRefs=false`; and snapshots, clears, then restores every ambient
 `GIT_*` variable.
+
+The scanner self-test also runs under both Windows hosts and under PowerShell
+7 on Ubuntu 24.04. It uses only disposable synthetic repositories and local
+processes. It verifies the sanitized Git child environment, binary standard
+streams, index/worktree provenance, final raw index equality, fail-closed
+index states, process-tree cleanup, and bounded diagnostics without contacting
+an external service or using real credentials. A lower-only test deadline
+also proves that an expired scan cannot emit a success result; callers cannot
+extend the production 120-second ceiling.
 
 ## Pull Request Expectations
 

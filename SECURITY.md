@@ -45,14 +45,56 @@ Public issues must not include:
 ## Scanner Coverage
 
 The private-marker scanner (`scripts/scan-private-markers.ps1`) is a
-best-effort safety net, not a guarantee. It scans git-tracked text files for
-a curated set of secret prefixes (GitHub, OpenAI, AWS, GCP, Slack, Stripe,
-PEM key blocks, and similar), private-looking absolute Windows paths,
-non-allowlisted GitHub repository URLs, and configured local markers, and it
-redacts any matched value. It does not detect every possible secret format
-and is no substitute for keeping real credentials out of the repository in
-the first place. Treat a passing scan as "no known marker found," not
-"definitely safe."
+best-effort safety net, not a guarantee. It scans regular stage-0 index blobs
+and regular tracked worktree files as separate provenance sources for a
+curated set of secret prefixes (GitHub, OpenAI, AWS, GCP, Slack, Stripe, PEM
+key blocks, and similar), private-looking absolute Windows paths,
+non-allowlisted GitHub repository URLs, and configured local markers. Matches
+are always redacted. Text candidates include common source/document/config
+extensions, extensionless files, dotenv names, `.npmrc`, `.pem`, and `.key`;
+unlisted extensions are skipped without text decoding. It does not detect
+every possible secret format and is no substitute for keeping real
+credentials out of the repository. Treat a passing scan as "no known marker
+found," not "definitely safe."
+
+Git-backed enumeration runs in bounded child processes with a cloned,
+sanitized environment and isolated configuration. Ambient and future
+`GIT_*`, repository/index/object redirection, config injection, hooks,
+attributes, excludes, templates, filters, prompts, tracing, replacement
+objects, and lazy promisor fetches are not inherited. The scanner never
+mutates its caller's environment. It requires the exact repository root and
+fails closed on malformed Git output, repository subdirectories, conflicts,
+intent-to-add entries, gitlinks, symlinks, reparse points, path escape,
+missing or changing worktree files, and tracked `.private-markers.local`.
+Non-Git fallback is allowed only when Git proves the path is not a repository
+or Git is unavailable with no `.git` marker in the target ancestry; nested
+and leaf `.git` controls are excluded.
+
+Unique index blobs share one binary-safe `git cat-file --batch` exchange.
+Immediately before reporting, raw `ls-files -z --stage` and
+`ls-files -z --stage --debug` snapshots must match their initial bytes
+exactly, including flags. A scan-wide deadline and independent
+process-stream, entry, per-file byte, total byte, line, regex-match, per-file
+finding, total finding, and diagnostic-width limits bound hostile input. The
+complete finding table uses explicit LF, is encoded once, and must fit within
+64 KiB of actual UTF-8 bytes before any row is emitted. After serialization,
+the scan-wide deadline is checked again immediately before failure output;
+the clean path performs the same check immediately before success output.
+
+On Windows, each child is created suspended with a three-handle
+stdin/stdout/stderr inheritance allowlist, assigned to a per-command
+kill-on-close Job, and resumed only after assignment. This closes the
+start-before-assignment descendant race. On POSIX, each child enters a
+dedicated session/process group before its first instruction. Cleanup signals
+the whole group with `kill(2)` and accepts only success or `ESRCH`; permission
+and other signal failures remain fail closed.
+
+Before output, control/format characters, bidi controls, zero-width
+characters, and Unicode line/paragraph separators in diagnostic fields are
+escaped. Missing or otherwise unresolvable user paths emit only a fixed code,
+without the supplied path or raw PowerShell error framing. Process byte
+limits count actual stdin/stdout/stderr bytes, including prefixes and the
+platform newline.
 
 ## Response Expectations
 
