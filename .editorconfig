@@ -11,5 +11,9 @@ indent_size = 4
 [*.{md,yml,yaml}]
 indent_size = 2
 
+[*.ps1]
+# Windows PowerShell 5.1 が日本語コメントをCP932として誤読しないよう固定する。
+charset = utf-8-bom
+
 [*.md]
 trim_trailing_whitespace = false

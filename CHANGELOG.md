@@ -19,6 +19,36 @@ The format loosely follows Keep a Changelog conventions.
 
 ### Changed
 
+- Hardened private-marker scanning so every Git probe runs through a bounded,
+  hermetic child-process boundary. Ambient and future `GIT_*` variables,
+  home/config, hooks, attributes, excludes, templates, filters, prompts,
+  replacement refs, lazy fetches, and trace settings can no longer redirect
+  repository enumeration or create caller-selected artifacts.
+- Closed the Windows start-before-Job-assignment race by creating each child
+  suspended, inheriting only stdin/stdout/stderr, assigning its kill-on-close
+  Job, and resuming afterward. POSIX starts each child in an atomic dedicated
+  session/process group and uses errno-aware `kill(2)` cleanup.
+- Changed Git-backed coverage to the union of regular stage-0 index blobs and
+  tracked worktree files. One binary-safe `git cat-file --batch` reads unique
+  staged blobs, while exact initial/final raw stage and index-debug snapshots
+  reject staged-content and flags-only drift.
+- Added fail-closed coverage for malformed/conflict/intent-to-add/gitlink
+  entries, symlinks, reparse points, missing or changing worktree files,
+  repository-subdirectory scope, leaf `.git` controls, and tracked local
+  marker files. Sensitive text candidates now include dotenv, npm config,
+  PEM/key, and extensionless names.
+- Bounded the scan-wide deadline, process streams, entries, bytes, lines,
+  regex matches, findings, and diagnostic fields. Diagnostics escape control,
+  format, bidi, and Unicode separator characters without replaying hostile
+  paths or matched values; the complete finding payload is capped at 64 KiB
+  of actual UTF-8 bytes before emission. The deadline is rechecked after
+  serialization and immediately before both failure and success output.
+- Added distinct PowerShell 7, Windows PowerShell 5.1, and Ubuntu 24.04
+  scanner self-tests. The first bounded-process call now proves exact binary
+  `00/80/FF` transport across stdin, stdout, and stderr.
+- Pinned the GitHub Actions checkout step to the reviewed `v5` commit and
+  added finite job timeouts. Readiness validation now binds every runner,
+  timeout, checkout revision, and step to its owning workflow job.
 - Recorded live GitHub squash-merge cleanup evidence from
   [PR #2](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/2):
   `MERGED` state, landed `mergeCommit`, unchanged local and remote tips

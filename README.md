@@ -252,6 +252,50 @@ test. Recursive cleanup requires an OS-aware, direct GUID-named child of the
 temporary directory and rejects reparse points. CI executes the test with
 both PowerShell 7 and Windows PowerShell 5.1.
 
+The private-marker self-test also retains the PowerShell host that starts it,
+so the `powershell` and `pwsh` commands above are distinct compatibility
+measurements. GitHub Actions runs that full scanner suite under both Windows
+hosts and PowerShell 7 on Ubuntu 24.04. Its first bounded-process invocation
+passes the exact binary byte sequence `00/80/FF` through stdin and requires
+the same sequence independently on stdout and stderr.
+
+Git-backed marker scanning requires the exact repository root. Each Git child
+receives a cloned, sanitized environment with ambient and unknown `GIT_*`,
+user/system configuration, hooks, attributes, excludes, templates, filters,
+prompts, replacement objects, lazy fetches, and trace destinations disabled.
+The caller's environment is never mutated. On Windows, the executable is
+created suspended with only its three standard streams inheritable, assigned
+to a kill-on-close Job, and resumed only after assignment. On POSIX, it starts
+in a dedicated session/process group before its first instruction; cleanup
+signals that entire group with direct `kill(2)` and treats only success or
+`ESRCH` as a successful stop.
+
+The scan covers both regular stage-0 index blobs and their regular worktree
+files as separate provenance sources. One binary-safe `git cat-file --batch`
+reads unique staged blobs, and byte-identical final raw `ls-files -z --stage`
+and `ls-files -z --stage --debug` snapshots are required immediately before
+reporting. Conflicts, intent-to-add (present or missing), gitlinks, symlinks,
+reparse points, path escape, missing or concurrently changing files,
+repository subdirectories, malformed Git output, and tracked
+`.private-markers.local` fail closed. Non-Git fallback includes hidden text
+but excludes both nested `.git` directories and leaf `.git` control files.
+
+Text candidates include common source/document/config extensions,
+extensionless files, `.env`, `.env.*`, `*.env`, `.npmrc`, `.pem`, and `.key`;
+unlisted extensions remain binary-safe skips. A scan-wide deadline plus
+independent process-stream, entry, file-byte, total-byte, line, match,
+per-file finding, total finding, and diagnostic-width limits bound hostile
+input. The same deadline is rechecked after finding serialization and
+immediately before either failure or success output. Diagnostics escape
+control/format, bidi, zero-width, and Unicode
+line/paragraph separator characters. An unresolvable user path produces only
+a fixed failure code and never replays the path or PowerShell exception
+framing. The complete failure prefix, TSV header, rows, and explicit LF
+separators are serialized once and capped at 64 KiB of actual UTF-8 bytes;
+over-limit output collapses to a fixed diagnostic without a partial table.
+Passing remains a best-effort marker result, not proof that content is
+secret-free.
+
 Also run Git whitespace checks on your working changes before publishing:
 
 ```bash
@@ -260,7 +304,8 @@ git diff --check
 
 The GitHub Actions workflow runs the same validation, both cleanup-guard
 runtime variants, scan self-test, private-marker scan, and whitespace check on
-pull requests and pushes to `main`.
+pull requests and pushes to `main`; the Ubuntu job also runs the cleanup-guard
+suite with PowerShell 7.
 
 ## Contributing
 
@@ -274,7 +319,8 @@ repository names, internal absolute paths, or customer data.
 For local-only private markers, create an untracked `.private-markers.local`
 file with one literal marker per line, or set
 `ISOLATED_WORKTREE_PR_FLOW_PRIVATE_MARKERS` with newline-separated markers.
-The scanner reads these values but does not print the matched marker.
+The scanner reads these values but does not print the matched marker, and it
+fails closed if `.private-markers.local` appears in the Git index.
 
 ## Security
 
