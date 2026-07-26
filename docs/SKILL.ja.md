@@ -256,7 +256,12 @@ POSIX の両方の例を併記しています。Windows 固有の部分（ディ
      [PR #2](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/2) で実測し、
      `MERGED`、default branch に入った `mergeCommit`、local / remote の先端と
      `headRefOid` の一致、guard 後の local `-D` と明示的な remote 削除が全て通った。
-     GitHub の live rebase cleanup は未確認。
+     GitHub の live rebase 経路は 2026-07-26 に
+     [PR #5](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/5) で実測し、
+     `MERGED`、書き換えられて default branch に入った `mergeCommit`、元 head が
+     default branch の ancestor ではないこと、local / remote の先端と
+     `headRefOid` の一致、guard 後の local `-D`、明示的な remote 削除、owned
+     worktree cleanup が全て通り、main checkout も不変だった。
 
 3. 消す対象の worktree / branch が「このフローで自分が作った」ものであること —
    他エージェントや人間のものは消さない。
@@ -338,6 +343,6 @@ git -C <repo> remote prune origin
 蒸留したものです — 上記の各ルールは、実際に観測された失敗か検証済みのリカバリに
 遡れます（推測由来のルールはありません）。「実測」「実運用の教訓」と書かれた項目は
 実際に踏んで回避した挙動を指します。まだ実運用検証がない項目は明示的に
-「未確認」と記しています — 特に guard 2b の GitHub 側 rebase 操作（squash
-経路は live 実測済みで、両方式の local Git 履歴形状と拒否経路は合成回帰テスト
-あり）と、再帰削除のリンク追従挙動のプラットフォーム差。
+「未確認」と記しています — 現在の主な例は、再帰削除のリンク追従挙動の
+プラットフォーム差です。guard 2b の GitHub 側 squash / rebase 操作は live
+実測済みで、両方式の local Git 履歴形状と拒否経路にも合成回帰テストがあります。

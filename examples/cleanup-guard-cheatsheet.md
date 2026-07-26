@@ -51,8 +51,13 @@ snapshotted, cleared, and restored so repository and trace paths cannot escape
 the fixture. The live GitHub squash path was measured on 2026-07-23 with
 [PR #2](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/2):
 `MERGED`, landed `mergeCommit`, unchanged tips matching `headRefOid`, and
-guarded local/remote cleanup all passed. Live GitHub rebase cleanup remains
-unverified.
+guarded local/remote cleanup all passed. The live GitHub rebase path was
+measured on 2026-07-26 with
+[PR #5](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/5):
+`MERGED`, a rewritten landed `mergeCommit`, original head outside the
+default-branch ancestry, unchanged local and remote tips matching
+`headRefOid`, guarded local `-D`, explicit remote deletion, and owned worktree
+cleanup all passed while the main checkout stayed unchanged.
 
 ## What goes wrong when you mix them
 

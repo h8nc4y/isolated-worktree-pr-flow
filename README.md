@@ -196,8 +196,13 @@ worktree を切って PR を作るための手順です。
   measured on 2026-07-23 with
   [PR #2](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/2):
   `MERGED`, landed `mergeCommit`, unchanged tips matching `headRefOid`, and
-  guarded local/remote cleanup all passed. Live GitHub rebase cleanup remains
-  unverified.
+  guarded local/remote cleanup all passed. Its live GitHub rebase path was
+  measured on 2026-07-26 with
+  [PR #5](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/5):
+  `MERGED`, a rewritten landed `mergeCommit`, original head outside the
+  default-branch ancestry, unchanged local and remote tips matching
+  `headRefOid`, guarded local `-D`, explicit remote deletion, and owned
+  worktree cleanup all passed while the main checkout stayed unchanged.
 - Whether recursive deletion follows directory junctions or symlinks varies
   by platform, tool, and version (unverified); the skill's rule is to remove
   links explicitly instead of relying on that behavior.

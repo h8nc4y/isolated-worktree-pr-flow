@@ -29,8 +29,8 @@ that way:
 - Claims about git/gh behavior should be grounded in something observable
   (a reproducible command sequence, a measured incident). Mark speculation
   and design-derived-but-unvalidated guidance explicitly as unverified —
-  the still-unmeasured live rebase side of cleanup guard 2b is the existing
-  example of how to phrase this.
+  platform-specific link-following behavior during recursive cleanup is the
+  existing example of how to phrase this.
 - Do not remove existing honesty markers ("field-tested", "unverified")
   without evidence that changes their status.
 
