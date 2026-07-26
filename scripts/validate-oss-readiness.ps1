@@ -223,22 +223,28 @@ function Get-WorkflowJobLines {
         return @()
     }
     $lines = @($workflowSource -split '\r?\n')
-    $jobStart = -1
+    $jobStartIndexes = New-Object System.Collections.Generic.List[int]
     for ($index = 0; $index -lt $lines.Count; $index++) {
         $jobMatch = [regex]::Match(
             $lines[$index],
             '^  (?<name>[A-Za-z0-9_-]+):[ \t]*$'
         )
         if ($jobMatch.Success -and
-            $jobMatch.Groups['name'].Value -ceq $JobName) {
-            $jobStart = $index
-            break
+            [string]::Equals(
+                $jobMatch.Groups['name'].Value,
+                $JobName,
+                [System.StringComparison]::Ordinal
+            )) {
+            $jobStartIndexes.Add($index) | Out-Null
         }
     }
-    if ($jobStart -lt 0) {
-        Add-Failure "Workflow job '$JobName' is missing."
+    if ($jobStartIndexes.Count -ne 1) {
+        Add-Failure "Workflow job '$JobName' must appear exactly once (found $($jobStartIndexes.Count))."
+    }
+    if ($jobStartIndexes.Count -eq 0) {
         return @()
     }
+    $jobStart = $jobStartIndexes[0]
 
     $jobEnd = $lines.Count
     for ($index = $jobStart + 1; $index -lt $lines.Count; $index++) {
@@ -248,6 +254,129 @@ function Get-WorkflowJobLines {
         }
     }
     return @($lines[$jobStart..($jobEnd - 1)])
+}
+
+function Assert-WorkflowDocumentShape {
+    param(
+        [string]$RelativePath,
+        [string[]]$ExpectedJobNames
+    )
+
+    $filePath = Get-RepoFilePath -RelativePath $RelativePath
+    if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+        Add-Failure "Cannot inspect missing workflow file: $RelativePath"
+        return
+    }
+
+    # GitHubが解釈するtrigger・permission・job集合を文書全体で固定する。
+    # 個別jobだけが正しくても、第二documentや重複root/jobで上書きできれば
+    # required CIを無効化できるため、blank/comment以外の構造を順序込みで比較する。
+    try {
+        $workflowSource = [System.IO.File]::ReadAllText(
+            $filePath,
+            (New-Object System.Text.UTF8Encoding($false, $true))
+        )
+    }
+    catch {
+        Add-Failure "Workflow file '$RelativePath' must be valid UTF-8."
+        return
+    }
+    $lines = @($workflowSource -split '\r?\n')
+    $jobsRootIndexes = New-Object System.Collections.Generic.List[int]
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        if ([string]::Equals(
+            $lines[$index],
+            'jobs:',
+            [System.StringComparison]::Ordinal
+        )) {
+            $jobsRootIndexes.Add($index) | Out-Null
+        }
+    }
+    if ($jobsRootIndexes.Count -ne 1) {
+        Add-Failure "Workflow must contain exactly one ordinal 'jobs:' root key (found $($jobsRootIndexes.Count))."
+    }
+    if ($jobsRootIndexes.Count -eq 0) {
+        return
+    }
+    $jobsRootIndex = $jobsRootIndexes[0]
+
+    $expectedPrefixLines = @(
+        'name: Validate',
+        'on:',
+        '  pull_request:',
+        '  push:',
+        '    branches:',
+        '      - main',
+        'permissions:',
+        '  contents: read',
+        'jobs:'
+    )
+    $actualPrefixLines = New-Object System.Collections.Generic.List[string]
+    for ($index = 0; $index -le $jobsRootIndex; $index++) {
+        $line = $lines[$index]
+        if ([string]::IsNullOrWhiteSpace($line) -or
+            $line.TrimStart().StartsWith('#', [System.StringComparison]::Ordinal)) {
+            continue
+        }
+        $actualPrefixLines.Add($line) | Out-Null
+    }
+    $prefixMatches = $actualPrefixLines.Count -eq $expectedPrefixLines.Count
+    if ($prefixMatches) {
+        for ($index = 0; $index -lt $expectedPrefixLines.Count; $index++) {
+            if (-not [string]::Equals(
+                $actualPrefixLines[$index],
+                $expectedPrefixLines[$index],
+                [System.StringComparison]::Ordinal
+            )) {
+                $prefixMatches = $false
+                break
+            }
+        }
+    }
+    if (-not $prefixMatches) {
+        Add-Failure 'Workflow root must exactly declare Validate, PR/main-push triggers, read-only contents permission, and one jobs mapping.'
+    }
+
+    $expectedJobHeadings = @(
+        $ExpectedJobNames | ForEach-Object { "  ${_}:" }
+    )
+    $actualJobHeadings = New-Object System.Collections.Generic.List[string]
+    for ($index = $jobsRootIndex + 1; $index -lt $lines.Count; $index++) {
+        $line = $lines[$index]
+        if ([string]::IsNullOrWhiteSpace($line) -or
+            $line.TrimStart().StartsWith('#', [System.StringComparison]::Ordinal)) {
+            continue
+        }
+
+        # jobs配下でindent 0〜3のactive lineはroot keyかdirect job heading。
+        # 第二document、未知root、quoted/explicit key、重複jobを全て比較対象にする。
+        $firstContentIndex = 0
+        while ($firstContentIndex -lt $line.Length -and
+            ($line[$firstContentIndex] -eq ' ' -or
+             $line[$firstContentIndex] -eq "`t")) {
+            $firstContentIndex++
+        }
+        if ($firstContentIndex -le 3) {
+            $actualJobHeadings.Add($line) | Out-Null
+        }
+    }
+    $jobHeadingsMatch =
+        $actualJobHeadings.Count -eq $expectedJobHeadings.Count
+    if ($jobHeadingsMatch) {
+        for ($index = 0; $index -lt $expectedJobHeadings.Count; $index++) {
+            if (-not [string]::Equals(
+                $actualJobHeadings[$index],
+                $expectedJobHeadings[$index],
+                [System.StringComparison]::Ordinal
+            )) {
+                $jobHeadingsMatch = $false
+                break
+            }
+        }
+    }
+    if (-not $jobHeadingsMatch) {
+        Add-Failure 'Workflow jobs mapping must contain exactly validate, validate-ubuntu, and validate-macos in canonical order.'
+    }
 }
 
 function Get-WorkflowSteps {
@@ -336,8 +465,24 @@ function Assert-WorkflowJobValue {
     # `$Matches` は -match が更新するautomatic変数なので、結果collectionへ
     # 同名（PowerShellはcase-insensitive）を使わずPS5.1/PS7差を避ける。
     $keyPattern = '^    ' + [regex]::Escape($Key) + ':[ \t]*'
-    $keyLines = @($Lines | Where-Object { $_ -match $keyPattern })
-    $matchingLines = @($keyLines | Where-Object { $_ -match $pattern })
+    $keyLines = @(
+        $Lines | Where-Object {
+            [regex]::IsMatch(
+                $_,
+                $keyPattern,
+                [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+            )
+        }
+    )
+    $matchingLines = @(
+        $keyLines | Where-Object {
+            [regex]::IsMatch(
+                $_,
+                $pattern,
+                [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+            )
+        }
+    )
     if ($keyLines.Count -ne 1 -or $matchingLines.Count -ne 1) {
         Add-Failure "Workflow job '$JobName' must declare exactly one '${Key}: $ExpectedValue' value (total keys $($keyLines.Count), expected values $($matchingLines.Count))."
     }
@@ -418,7 +563,15 @@ function Assert-WorkflowStep {
         [string]$Run
     )
 
-    $matches = @($Steps | Where-Object { $_.Name -ceq $Name })
+    $matches = @(
+        $Steps | Where-Object {
+            [string]::Equals(
+                $_.Name,
+                $Name,
+                [System.StringComparison]::Ordinal
+            )
+        }
+    )
     if ($matches.Count -ne 1) {
         Add-Failure "Workflow job '$JobName' must contain exactly one active step named '$Name' (found $($matches.Count))."
         return
@@ -430,10 +583,18 @@ function Assert-WorkflowStep {
         $step.UsesCount -ne 0) {
         Add-Failure "Workflow job '$JobName' step '$Name' must contain exactly one shell/run and no uses key."
     }
-    if (-not $step.Shell.Equals($Shell, [System.StringComparison]::OrdinalIgnoreCase)) {
+    if (-not [string]::Equals(
+        $step.Shell,
+        $Shell,
+        [System.StringComparison]::Ordinal
+    )) {
         Add-Failure "Workflow job '$JobName' step '$Name' must use shell '$Shell' (found '$($step.Shell)')."
     }
-    if ($step.Run -cne $Run) {
+    if (-not [string]::Equals(
+        $step.Run,
+        $Run,
+        [System.StringComparison]::Ordinal
+    )) {
         Add-Failure "Workflow job '$JobName' step '$Name' must run '$Run' (found '$($step.Run)')."
     }
 }
@@ -446,7 +607,15 @@ function Assert-WorkflowUsesStep {
         [string]$Uses
     )
 
-    $matches = @($Steps | Where-Object { $_.Name -ceq $Name })
+    $matches = @(
+        $Steps | Where-Object {
+            [string]::Equals(
+                $_.Name,
+                $Name,
+                [System.StringComparison]::Ordinal
+            )
+        }
+    )
     if ($matches.Count -ne 1) {
         Add-Failure "Workflow job '$JobName' must contain exactly one active step named '$Name' (found $($matches.Count))."
         return
@@ -458,7 +627,11 @@ function Assert-WorkflowUsesStep {
         $step.RunCount -ne 0) {
         Add-Failure "Workflow job '$JobName' step '$Name' must contain exactly one uses key and no shell/run key."
     }
-    if ($step.Uses -cne $Uses) {
+    if (-not [string]::Equals(
+        $step.Uses,
+        $Uses,
+        [System.StringComparison]::Ordinal
+    )) {
         Add-Failure "Workflow job '$JobName' step '$Name' must use '$Uses' (found '$($step.Uses)')."
     }
 }
@@ -546,6 +719,10 @@ Assert-FileContains -RelativePath 'README.md' -Pattern '(?im)^##\s+Security' -De
 Assert-FileContains -RelativePath 'README.md' -Pattern 'CONTRIBUTING\.md' -Description 'link to CONTRIBUTING.md'
 Assert-FileContains -RelativePath 'README.md' -Pattern 'SECURITY\.md' -Description 'link to SECURITY.md'
 Assert-FileContains -RelativePath 'README.md' -Pattern 'docs/SKILL\.ja\.md' -Description 'link to the Japanese skill version'
+Assert-FileContains -RelativePath 'README.md' -Pattern 'macOS 15' -Description 'native macOS validation coverage'
+Assert-FileContains -RelativePath 'SKILL.md' -Pattern 'macOS 15' -Description 'native macOS portability coverage'
+Assert-FileContains -RelativePath 'docs/SKILL.ja.md' -Pattern 'macOS 15' -Description 'Japanese native macOS portability coverage'
+Assert-FileContains -RelativePath 'CONTRIBUTING.md' -Pattern 'macOS 15' -Description 'contributor native macOS validation coverage'
 Assert-FileContains -RelativePath '.gitignore' -Pattern '\.private-markers\.local' -Description 'ignore local private marker files'
 Assert-FileContains -RelativePath 'CONTRIBUTING.md' -Pattern '(?im)no token|never.*token|secret' -Description 'secret-safe contribution guidance'
 Assert-FileContains -RelativePath 'SECURITY.md' -Pattern '(?im)do not.*public|private|security' -Description 'private vulnerability reporting guidance'
@@ -568,6 +745,10 @@ Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Patte
 # 検証する。後続jobへ跨ぐregexによる誤合格を許さない。
 $workflowPath = '.github/workflows/validate.yml'
 $checkoutRevision = 'actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'
+Assert-WorkflowDocumentShape `
+    -RelativePath $workflowPath `
+    -ExpectedJobNames @('validate', 'validate-ubuntu', 'validate-macos')
+
 $windowsJobName = 'validate'
 $windowsJobLines = @(Get-WorkflowJobLines `
     -RelativePath $workflowPath `
@@ -575,6 +756,8 @@ $windowsJobLines = @(Get-WorkflowJobLines `
 $windowsSteps = @(Get-WorkflowSteps `
     -Lines $windowsJobLines `
     -JobName $windowsJobName)
+Assert-WorkflowJobValue -Lines $windowsJobLines -JobName $windowsJobName `
+    -Key 'name' -ExpectedValue 'Validate skill repository'
 Assert-WorkflowJobValue -Lines $windowsJobLines -JobName $windowsJobName `
     -Key 'runs-on' -ExpectedValue 'windows-latest'
 Assert-WorkflowJobValue -Lines $windowsJobLines -JobName $windowsJobName `
@@ -615,6 +798,8 @@ $ubuntuSteps = @(Get-WorkflowSteps `
     -Lines $ubuntuJobLines `
     -JobName $ubuntuJobName)
 Assert-WorkflowJobValue -Lines $ubuntuJobLines -JobName $ubuntuJobName `
+    -Key 'name' -ExpectedValue 'Validate skill repository on Ubuntu'
+Assert-WorkflowJobValue -Lines $ubuntuJobLines -JobName $ubuntuJobName `
     -Key 'runs-on' -ExpectedValue 'ubuntu-24.04'
 Assert-WorkflowJobValue -Lines $ubuntuJobLines -JobName $ubuntuJobName `
     -Key 'timeout-minutes' -ExpectedValue '10'
@@ -637,6 +822,41 @@ Assert-WorkflowStep -Steps $ubuntuSteps -JobName $ubuntuJobName `
     -Name 'Scan for private markers on Ubuntu' -Shell 'pwsh' `
     -Run './scripts/scan-private-markers.ps1'
 Assert-WorkflowStep -Steps $ubuntuSteps -JobName $ubuntuJobName `
+    -Name 'Check whitespace' -Shell 'pwsh' `
+    -Run 'git diff-tree --check 4b825dc642cb6eb9a060e54bf8d69288fbee4904 HEAD'
+
+$macosJobName = 'validate-macos'
+$macosJobLines = @(Get-WorkflowJobLines `
+    -RelativePath $workflowPath `
+    -JobName $macosJobName)
+$macosSteps = @(Get-WorkflowSteps `
+    -Lines $macosJobLines `
+    -JobName $macosJobName)
+Assert-WorkflowJobValue -Lines $macosJobLines -JobName $macosJobName `
+    -Key 'name' -ExpectedValue 'Validate skill repository on macOS'
+Assert-WorkflowJobValue -Lines $macosJobLines -JobName $macosJobName `
+    -Key 'runs-on' -ExpectedValue 'macos-15'
+Assert-WorkflowJobValue -Lines $macosJobLines -JobName $macosJobName `
+    -Key 'timeout-minutes' -ExpectedValue '10'
+Assert-WorkflowStepCount -Steps $macosSteps -JobName $macosJobName `
+    -ExpectedCount 6
+Assert-WorkflowJobShape -Lines $macosJobLines -JobName $macosJobName `
+    -ExpectedStepCount 6 -ExpectedShellCount 5 -ExpectedRunCount 5
+Assert-WorkflowUsesStep -Steps $macosSteps -JobName $macosJobName `
+    -Name 'Check out repository' -Uses $checkoutRevision
+Assert-WorkflowStep -Steps $macosSteps -JobName $macosJobName `
+    -Name 'Validate OSS readiness on macOS' -Shell 'pwsh' `
+    -Run './scripts/validate-oss-readiness.ps1'
+Assert-WorkflowStep -Steps $macosSteps -JobName $macosJobName `
+    -Name 'Test cleanup guards (PowerShell 7 on macOS)' -Shell 'pwsh' `
+    -Run './scripts/test-cleanup-guards.ps1'
+Assert-WorkflowStep -Steps $macosSteps -JobName $macosJobName `
+    -Name 'Test private marker scan (PowerShell 7 on macOS)' -Shell 'pwsh' `
+    -Run './scripts/test-scan-private-markers.ps1'
+Assert-WorkflowStep -Steps $macosSteps -JobName $macosJobName `
+    -Name 'Scan for private markers on macOS' -Shell 'pwsh' `
+    -Run './scripts/scan-private-markers.ps1'
+Assert-WorkflowStep -Steps $macosSteps -JobName $macosJobName `
     -Name 'Check whitespace' -Shell 'pwsh' `
     -Run 'git diff-tree --check 4b825dc642cb6eb9a060e54bf8d69288fbee4904 HEAD'
 

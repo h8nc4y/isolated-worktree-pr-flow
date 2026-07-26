@@ -79,14 +79,16 @@ system/global configuration, hooks, and signing; fixes
 `rebase.updateRefs=false`; and snapshots, clears, then restores every ambient
 `GIT_*` variable.
 
-The scanner self-test also runs under both Windows hosts and under PowerShell
-7 on Ubuntu 24.04. It uses only disposable synthetic repositories and local
-processes. It verifies the sanitized Git child environment, binary standard
-streams, index/worktree provenance, final raw index equality, fail-closed
-index states, process-tree cleanup, and bounded diagnostics without contacting
-an external service or using real credentials. A lower-only test deadline
-also proves that an expired scan cannot emit a success result; callers cannot
-extend the production 120-second ceiling.
+The scanner self-test is configured for both Windows hosts and for PowerShell
+7 on Ubuntu 24.04 and native macOS 15. The first native macOS result remains
+pending until its pull-request job completes. The suite uses only disposable
+synthetic repositories and local processes. It verifies the sanitized Git
+child environment, binary standard streams, index/worktree provenance, final
+raw index equality, fail-closed index states, process-tree cleanup, and
+bounded diagnostics without contacting an external service or using real
+credentials. A lower-only test deadline also proves that an expired scan
+cannot emit a success result; callers cannot extend the production
+120-second ceiling.
 
 ## Pull Request Expectations
 
