@@ -734,9 +734,13 @@ Assert-FileContains -RelativePath 'scripts/scan-private-markers.ps1' -Pattern 'A
 Assert-FileContains -RelativePath 'scripts/scan-private-markers.ps1' -Pattern '(?s)\[ValidateRange\(1,\s*120000\)\]\s*\[int\]\$ScanDeadlineMilliseconds\s*=\s*120000' -Description 'lower-only scan-wide deadline self-test seam'
 Assert-FinalScanDeadlineContract -RelativePath 'scripts/scan-private-markers.ps1'
 Assert-FileContains -RelativePath 'scripts/scan-private-markers.ps1' -Pattern 'maximumFindingOutputBytes' -Description 'actual UTF-8 finding output cap'
+Assert-FileContains -RelativePath 'scripts/scan-private-markers.ps1' -Pattern "'--is-inside-work-tree'" -Description 'Git semantic worktree-root proof'
+Assert-FileContains -RelativePath 'scripts/scan-private-markers.ps1' -Pattern "'--show-prefix'" -Description 'Git root-relative prefix proof'
+Assert-FileContains -RelativePath 'scripts/scan-private-markers.ps1' -Pattern '\[StringComparison\]::Ordinal' -Description 'ordinal Git root record comparison'
 Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'private-marker-process\.ps1' -Description 'shared bounded process boundary in scanner self-test'
 Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'PosixSignal.*IsSuccessfulResult' -Description 'POSIX errno cleanup regression coverage'
 Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern '\[byte\[\]\]\$binaryProbeBytes\s*=\s*@\(0x00,\s*0x80,\s*0xFF\)' -Description 'exact binary standard-stream fixture'
+Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'root-probe-zero-width-space' -Description 'Unicode format root-probe regression coverage'
 Assert-FirstTopLevelProcessInvocationIsBinary `
     -RelativePath 'scripts/test-scan-private-markers.ps1'
 Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'scan-diagnostic-output-limit' -Description 'finding output amplification regression coverage'

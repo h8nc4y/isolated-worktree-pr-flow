@@ -266,8 +266,11 @@ run completes. The first bounded-process invocation passes the exact binary
 byte sequence `00/80/FF` through stdin and requires the same sequence
 independently on stdout and stderr.
 
-Git-backed marker scanning requires the exact repository root. Each Git child
-receives a cloned, sanitized environment with ambient and unknown `GIT_*`,
+Git-backed marker scanning requires the exact repository root. Git proves
+that boundary semantically with `--is-inside-work-tree` plus an empty
+`--show-prefix`; it does not compare absolute path spellings, which may alias
+the same physical directory on macOS. Each Git child receives a cloned,
+sanitized environment with ambient and unknown `GIT_*`,
 user/system configuration, hooks, attributes, excludes, templates, filters,
 prompts, replacement objects, lazy fetches, and trace destinations disabled.
 The caller's environment is never mutated. On Windows, the executable is

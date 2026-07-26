@@ -27,6 +27,11 @@ The format loosely follows Keep a Changelog conventions.
   home/config, hooks, attributes, excludes, templates, filters, prompts,
   replacement refs, lazy fetches, and trace settings can no longer redirect
   repository enumeration or create caller-selected artifacts.
+- Replaced lexical absolute-path equality in the Git root probe with Git's
+  exact inside-worktree record and empty root-relative prefix. Equivalent
+  macOS path aliases no longer cause a false rejection, while subdirectories,
+  `.git` directories, bare repositories, malformed records, NUL bytes, and
+  Unicode format-character lookalikes remain fail closed.
 - Closed the Windows start-before-Job-assignment race by creating each child
   suspended, inheriting only stdin/stdout/stderr, assigning its kill-on-close
   Job, and resuming afterward. POSIX starts each child in an atomic dedicated
