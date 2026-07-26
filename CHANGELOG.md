@@ -19,6 +19,9 @@ The format loosely follows Keep a Changelog conventions.
 
 ### Changed
 
+- Made the rebase cleanup fixture fail directly when the landed commit does
+  not differ from the original PR head, so guard 2b's rewritten-history
+  premise cannot pass only through indirect topology assertions.
 - Hardened private-marker scanning so every Git probe runs through a bounded,
   hermetic child-process boundary. Ambient and future `GIT_*` variables,
   home/config, hooks, attributes, excludes, templates, filters, prompts,
