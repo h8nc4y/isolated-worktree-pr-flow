@@ -211,6 +211,84 @@ function ConvertTo-TestProcessResult {
     }
 }
 
+function Assert-FakeGitRootProbeFailures {
+    param(
+        [string]$ScanPath,
+        [string]$FakeGitDirectory
+    )
+
+    # Git root probe は exact 2 record と固定 ASCII "true"、空 prefix の
+    # すべてを要求する。Unicode format 文字を culture-aware 比較で
+    # true と同一視したり、NUL/追加 record を正規化してはならない。
+    $rootProbeCases = @(
+        @{
+            Mode = 'root-probe-one-record'
+            Expected = 'Git root probe returned malformed output'
+        },
+        @{
+            Mode = 'root-probe-extra-record'
+            Expected = 'Git root probe returned malformed output'
+        },
+        @{
+            Mode = 'root-probe-false'
+            Expected = 'inside a Git worktree at its exact root'
+        },
+        @{
+            Mode = 'root-probe-uppercase'
+            Expected = 'inside a Git worktree at its exact root'
+        },
+        @{
+            Mode = 'root-probe-leading-space'
+            Expected = 'inside a Git worktree at its exact root'
+        },
+        @{
+            Mode = 'root-probe-soft-hyphen'
+            Expected = 'inside a Git worktree at its exact root'
+        },
+        @{
+            Mode = 'root-probe-zero-width-space'
+            Expected = 'inside a Git worktree at its exact root'
+        },
+        @{
+            Mode = 'root-probe-bom'
+            Expected = 'inside a Git worktree at its exact root'
+        },
+        @{
+            Mode = 'root-probe-word-joiner'
+            Expected = 'inside a Git worktree at its exact root'
+        },
+        @{
+            Mode = 'root-probe-nul'
+            Expected = 'Git root probe returned malformed output'
+        },
+        @{
+            Mode = 'root-probe-invalid-utf8'
+            Expected = 'not valid UTF-8'
+        },
+        @{
+            Mode = 'root-probe-prefix'
+            Expected = 'exact Git worktree root'
+        }
+    )
+    foreach ($rootProbeCase in $rootProbeCases) {
+        $rootProbeResult = Invoke-Scanner `
+            -ScanPath $ScanPath `
+            -EnvironmentOverrides @{
+                PATH = $FakeGitDirectory
+                PRIVATE_MARKER_SYNTHETIC_GIT_MODE = $rootProbeCase.Mode
+            }
+        if ($rootProbeResult.ExitCode -eq 0 -or
+            $rootProbeResult.Output -notmatch
+                [regex]::Escape($rootProbeCase.Expected)) {
+            Add-Failure (
+                "Expected synthetic Git mode $($rootProbeCase.Mode) to " +
+                "fail closed as $($rootProbeCase.Expected). Output: " +
+                $rootProbeResult.Output.Trim()
+            )
+        }
+    }
+}
+
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("isolated-worktree-pr-flow-scan-test-" + [System.Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
 $emptyCommandPath = Join-Path $tempRoot 'empty-command-path'
@@ -628,6 +706,89 @@ finally {
             [PrivateMarker.PosixSignal]::IsSuccessfulResult(-1, 13)) {
             Add-Failure 'Expected POSIX cleanup to accept success/ESRCH and reject EPERM/EACCES.'
         }
+
+        # native Linux/macOS では local fake Git を public entrypoint から
+        # 実行し、root probe の byte/record 境界を end-to-end で検証する。
+        $fakeGitDirectory = Join-Path $tempRoot 'synthetic-root-probe-git'
+        $fakeGitRoot = Join-Path $tempRoot 'synthetic-root-probe-root'
+        New-Item -ItemType Directory -Path $fakeGitDirectory | Out-Null
+        New-Item -ItemType Directory -Path $fakeGitRoot | Out-Null
+        $fakeGitPath = Join-Path $fakeGitDirectory 'git'
+        $fakeGitScript = @'
+#!/bin/sh
+case "$*" in
+  *"rev-parse --is-inside-work-tree --show-prefix"*)
+    case "${PRIVATE_MARKER_SYNTHETIC_GIT_MODE-}" in
+      root-probe-one-record)
+        printf 'true\n'
+        ;;
+      root-probe-extra-record)
+        printf 'true\n\nextra\n'
+        ;;
+      root-probe-false)
+        printf 'false\n\n'
+        ;;
+      root-probe-uppercase)
+        printf 'TRUE\n\n'
+        ;;
+      root-probe-leading-space)
+        printf ' true\n\n'
+        ;;
+      root-probe-soft-hyphen)
+        printf 't\302\255rue\n\n'
+        ;;
+      root-probe-zero-width-space)
+        printf 't\342\200\213rue\n\n'
+        ;;
+      root-probe-bom)
+        printf '\357\273\277true\n\n'
+        ;;
+      root-probe-word-joiner)
+        printf 't\342\201\240rue\n\n'
+        ;;
+      root-probe-nul)
+        printf 'tr\000ue\n\n'
+        ;;
+      root-probe-invalid-utf8)
+        printf '\377\n\n'
+        ;;
+      root-probe-prefix)
+        printf 'true\nsub/\n'
+        ;;
+      *)
+        exit 92
+        ;;
+    esac
+    ;;
+  *)
+    exit 93
+    ;;
+esac
+'@
+        [System.IO.File]::WriteAllText(
+            $fakeGitPath,
+            $fakeGitScript,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        $chmodCommand = Get-Command chmod -ErrorAction Stop
+        $fakeGitChmod = Invoke-PrivateMarkerProcess `
+            -FileName $chmodCommand.Source `
+            -Arguments @('+x', $fakeGitPath) `
+            -WorkingDirectory $tempRoot `
+            -TimeoutMilliseconds 10000
+        if ($fakeGitChmod.ExitCode -ne 0 -or
+            -not $fakeGitChmod.StreamsCompleted -or
+            -not $fakeGitChmod.TreeStopped -or
+            $fakeGitChmod.TimedOut -or
+            $fakeGitChmod.OutputLimitExceeded -or
+            $fakeGitChmod.InputWriteFailed -or
+            $fakeGitChmod.PipeLeakDetected) {
+            Add-Failure 'Expected the POSIX synthetic Git fixture to become executable.'
+        } else {
+            Assert-FakeGitRootProbeFailures `
+                -ScanPath $fakeGitRoot `
+                -FakeGitDirectory $fakeGitDirectory
+        }
     }
 
     if (Test-PrivateMarkerWindowsHost) {
@@ -787,10 +948,83 @@ public static class SyntheticGitProgram
         }
     }
 
+    private static bool IsRootProbe(string[] arguments)
+    {
+        return Array.IndexOf(arguments, "rev-parse") >= 0 &&
+            Array.IndexOf(arguments, "--is-inside-work-tree") >= 0 &&
+            Array.IndexOf(arguments, "--show-prefix") >= 0;
+    }
+
+    private static int WriteRootProbe(string mode, string[] arguments)
+    {
+        if (!IsRootProbe(arguments))
+        {
+            return 92;
+        }
+
+        byte[] output;
+        switch (mode)
+        {
+            case "root-probe-one-record":
+                output = Encoding.UTF8.GetBytes("true\n");
+                break;
+            case "root-probe-extra-record":
+                output = Encoding.UTF8.GetBytes("true\n\nextra\n");
+                break;
+            case "root-probe-false":
+                output = Encoding.UTF8.GetBytes("false\n\n");
+                break;
+            case "root-probe-uppercase":
+                output = Encoding.UTF8.GetBytes("TRUE\n\n");
+                break;
+            case "root-probe-leading-space":
+                output = Encoding.UTF8.GetBytes(" true\n\n");
+                break;
+            case "root-probe-soft-hyphen":
+                output = Encoding.UTF8.GetBytes("t\u00adrue\n\n");
+                break;
+            case "root-probe-zero-width-space":
+                output = Encoding.UTF8.GetBytes("t\u200brue\n\n");
+                break;
+            case "root-probe-bom":
+                output = Encoding.UTF8.GetBytes("\ufefftrue\n\n");
+                break;
+            case "root-probe-word-joiner":
+                output = Encoding.UTF8.GetBytes("t\u2060rue\n\n");
+                break;
+            case "root-probe-nul":
+                output = Encoding.UTF8.GetBytes("tr\0ue\n\n");
+                break;
+            case "root-probe-invalid-utf8":
+                output = new byte[] { 0xff, 0x0a, 0x0a };
+                break;
+            case "root-probe-prefix":
+                output = Encoding.UTF8.GetBytes("true\nsub/\n");
+                break;
+            default:
+                return 93;
+        }
+
+        using (var stdout = Console.OpenStandardOutput())
+        {
+            stdout.Write(output, 0, output.Length);
+            stdout.Flush();
+        }
+        return 0;
+    }
+
     public static int Main(string[] args)
     {
+        var syntheticMode =
+            Environment.GetEnvironmentVariable("PRIVATE_MARKER_SYNTHETIC_GIT_MODE");
+        if (!String.IsNullOrEmpty(syntheticMode) &&
+            syntheticMode.StartsWith("root-probe-", StringComparison.Ordinal))
+        {
+            return WriteRootProbe(syntheticMode, args);
+        }
+
         if (String.Equals(
-            Environment.GetEnvironmentVariable("PRIVATE_MARKER_SYNTHETIC_GIT_MODE"),
+            syntheticMode,
             "index-mutation",
             StringComparison.Ordinal))
         {
@@ -822,7 +1056,7 @@ public static class SyntheticGitProgram
         }
 
         if (String.Equals(
-            Environment.GetEnvironmentVariable("PRIVATE_MARKER_SYNTHETIC_GIT_MODE"),
+            syntheticMode,
             "flags-mutation",
             StringComparison.Ordinal))
         {
@@ -972,6 +1206,12 @@ Add-Type `
             -not $compileResult.TreeStopped -or
             -not (Test-Path -LiteralPath $syntheticGitPath -PathType Leaf)) {
             Add-Failure 'Expected bounded synthetic Git compilation to succeed.'
+        } else {
+            $fakeGitRoot = Join-Path $tempRoot 'synthetic-root-probe-root'
+            New-Item -ItemType Directory -Path $fakeGitRoot | Out-Null
+            Assert-FakeGitRootProbeFailures `
+                -ScanPath $fakeGitRoot `
+                -FakeGitDirectory $syntheticGitDirectory
         }
         $spawnerCompileResult = Invoke-PrivateMarkerProcess `
             -FileName $windowsPowerShell.Source `
@@ -1455,6 +1695,34 @@ Add-Type `
                 Select-Object -First 1
             if ($null -ne $danglingGitEntry) {
                 $danglingGitEntry.Delete()
+            }
+        }
+    } else {
+        # POSIX の symbolic-link root も Windows junction と同じ explicit
+        # root 境界で拒否し、link target を fallback 列挙しない。
+        $rootSymlinkPath = Join-Path $tempRoot 'root symlink'
+        $rootSymlinkTarget = Join-Path $tempRoot 'root symlink external target'
+        New-Item -ItemType Directory -Path $rootSymlinkTarget | Out-Null
+        Set-Content `
+            -LiteralPath (Join-Path $rootSymlinkTarget 'clean.md') `
+            -Value 'synthetic clean root-symlink content' `
+            -Encoding UTF8
+        try {
+            New-Item `
+                -ItemType SymbolicLink `
+                -Path $rootSymlinkPath `
+                -Target $rootSymlinkTarget |
+                Out-Null
+            $rootSymlinkResult = Invoke-Scanner -ScanPath $rootSymlinkPath
+            if ($rootSymlinkResult.ExitCode -eq 0 -or
+                $rootSymlinkResult.Output -notmatch
+                    'Explicit scan root must not be') {
+                Add-Failure "Expected an explicit root symlink to fail closed. Output: $($rootSymlinkResult.Output.Trim())"
+            }
+        }
+        finally {
+            if (Test-Path -LiteralPath $rootSymlinkPath) {
+                [System.IO.Directory]::Delete($rootSymlinkPath)
             }
         }
     }
@@ -2155,6 +2423,36 @@ printf '%s\n' 'hook-fired' > '$($hookSentinel.Replace([string][char]92, '/'))'
     if ($subdirectoryResult.ExitCode -eq 0 -or
         $subdirectoryResult.Output -notmatch 'exact Git worktree root') {
         Add-Failure "Expected a Git subdirectory scan to fail closed instead of falling back. Output: $($subdirectoryResult.Output.Trim())"
+    }
+
+    # `.git` directory と bare repository は空 prefix を返せても worktree
+    # ではない。absolute path 表記を比較しなくても exact root 証明で拒否する。
+    $gitDirectoryResult = Invoke-Scanner `
+        -ScanPath (Join-Path $trackedRoot '.git') `
+        -EnvironmentOverrides $adversarialEnvironment
+    if ($gitDirectoryResult.ExitCode -eq 0 -or
+        $gitDirectoryResult.Output -notmatch
+            'inside a Git worktree at its exact root') {
+        Add-Failure "Expected a .git directory scan to fail closed. Output: $($gitDirectoryResult.Output.Trim())"
+    }
+
+    $bareRoot = Join-Path $tempRoot 'bare git repository'
+    $bareIsolationRoot = Join-Path $tempRoot 'bare-git-isolation'
+    $bareInit = Invoke-HermeticGit `
+        -WorkingDirectory $tempRoot `
+        -Arguments @('init', '--bare', $bareRoot) `
+        -IsolationRoot $bareIsolationRoot
+    if ($bareInit.ExitCode -ne 0) {
+        Add-Failure "Expected bare repository fixture setup to succeed. Output: $($bareInit.Output.Trim())"
+    } else {
+        $bareResult = Invoke-Scanner `
+            -ScanPath $bareRoot `
+            -EnvironmentOverrides $adversarialEnvironment
+        if ($bareResult.ExitCode -eq 0 -or
+            $bareResult.Output -notmatch
+                'inside a Git worktree at its exact root') {
+            Add-Failure "Expected a bare repository scan to fail closed. Output: $($bareResult.Output.Trim())"
+        }
     }
 
     # worktree から消えた tracked file も index blob から検査し、silent skip を防ぐ。

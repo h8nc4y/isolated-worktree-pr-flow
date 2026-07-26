@@ -62,8 +62,11 @@ sanitized environment and isolated configuration. Ambient and future
 `GIT_*`, repository/index/object redirection, config injection, hooks,
 attributes, excludes, templates, filters, prompts, tracing, replacement
 objects, and lazy promisor fetches are not inherited. The scanner never
-mutates its caller's environment. It requires the exact repository root and
-fails closed on malformed Git output, repository subdirectories, conflicts,
+mutates its caller's environment. It requires Git's exact worktree root,
+proved by an exact `true` worktree record and an empty root-relative prefix
+instead of an absolute path spelling. It fails closed on malformed Git
+output, repository subdirectories, `.git` directories, bare repositories,
+conflicts,
 intent-to-add entries, gitlinks, symlinks, reparse points, path escape,
 missing or changing worktree files, and tracked `.private-markers.local`.
 Non-Git fallback is allowed only when Git proves the path is not a repository

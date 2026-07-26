@@ -27,6 +27,11 @@ The format loosely follows Keep a Changelog conventions.
   home/config, hooks, attributes, excludes, templates, filters, prompts,
   replacement refs, lazy fetches, and trace settings can no longer redirect
   repository enumeration or create caller-selected artifacts.
+- Replaced lexical absolute-path equality in the Git root probe with Git's
+  exact inside-worktree record and empty root-relative prefix. Equivalent
+  macOS path aliases no longer cause a false rejection, while subdirectories,
+  `.git` directories, bare repositories, malformed records, NUL bytes, and
+  Unicode format-character lookalikes remain fail closed.
 - Closed the Windows start-before-Job-assignment race by creating each child
   suspended, inheriting only stdin/stdout/stderr, assigning its kill-on-close
   Job, and resuming afterward. POSIX starts each child in an atomic dedicated
@@ -49,6 +54,11 @@ The format loosely follows Keep a Changelog conventions.
 - Added distinct PowerShell 7, Windows PowerShell 5.1, and Ubuntu 24.04
   scanner self-tests. The first bounded-process call now proves exact binary
   `00/80/FF` transport across stdin, stdout, and stderr.
+- Added a finite native macOS 15 validation job configured to run the
+  readiness contract, cleanup guards, scanner self-test, repository scan, and
+  committed-tree whitespace check under PowerShell 7. The Windows, Ubuntu,
+  and native macOS jobs all passed in
+  [PR #7 run 30216166105](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30216166105).
 - Pinned the GitHub Actions checkout step to the reviewed `v5` commit and
   added finite job timeouts. Readiness validation now binds every runner,
   timeout, checkout revision, and step to its owning workflow job.

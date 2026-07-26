@@ -50,8 +50,12 @@ worktree の依存欠如への対応、bounded CI ポーリング、merge 方式
 
 このフローは Windows（PowerShell + Git Bash）で鍛えられましたが、`git` / `gh`
 コマンド自体はクロスプラットフォームです。シェルが異なる箇所は PowerShell と
-POSIX の両方の例を併記しています。Windows 固有の部分（ディレクトリ junction と
-その削除セマンティクス）には POSIX の symlink 相当をインラインで注記しています。
+POSIX の両方の例を併記しています。CI は Windows host に加え、Ubuntu 24.04 と
+native macOS 15 で合成 cleanup guard と private-marker scanner を実行する
+PowerShell 7 job を含みます。3 job は
+[PR #7 run 30216166105](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30216166105)
+で全て成功しました。Windows 固有の部分（ディレクトリ junction とその削除
+セマンティクス）には POSIX の symlink 相当をインラインで注記しています。
 
 ## いつ使うか
 

@@ -260,12 +260,17 @@ both PowerShell 7 and Windows PowerShell 5.1.
 The private-marker self-test also retains the PowerShell host that starts it,
 so the `powershell` and `pwsh` commands above are distinct compatibility
 measurements. GitHub Actions runs that full scanner suite under both Windows
-hosts and PowerShell 7 on Ubuntu 24.04. Its first bounded-process invocation
-passes the exact binary byte sequence `00/80/FF` through stdin and requires
-the same sequence independently on stdout and stderr.
+hosts and under PowerShell 7 on Ubuntu 24.04 and native macOS 15. All three
+jobs passed in [PR #7 run 30216166105](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30216166105).
+The first bounded-process invocation passes the exact binary
+byte sequence `00/80/FF` through stdin and requires the same sequence
+independently on stdout and stderr.
 
-Git-backed marker scanning requires the exact repository root. Each Git child
-receives a cloned, sanitized environment with ambient and unknown `GIT_*`,
+Git-backed marker scanning requires the exact repository root. Git proves
+that boundary semantically with `--is-inside-work-tree` plus an empty
+`--show-prefix`; it does not compare absolute path spellings, which may alias
+the same physical directory on macOS. Each Git child receives a cloned,
+sanitized environment with ambient and unknown `GIT_*`,
 user/system configuration, hooks, attributes, excludes, templates, filters,
 prompts, replacement objects, lazy fetches, and trace destinations disabled.
 The caller's environment is never mutated. On Windows, the executable is
@@ -307,10 +312,13 @@ Also run Git whitespace checks on your working changes before publishing:
 git diff --check
 ```
 
-The GitHub Actions workflow runs the same validation, both cleanup-guard
-runtime variants, scan self-test, private-marker scan, and whitespace check on
-pull requests and pushes to `main`; the Ubuntu job also runs the cleanup-guard
-suite with PowerShell 7.
+The GitHub Actions workflow is configured to run the readiness validator,
+cleanup guards, scanner self-test, repository scan, and committed-tree
+whitespace check on pull requests and pushes to `main`. Windows covers
+PowerShell 7 and Windows PowerShell 5.1; Ubuntu 24.04 and native macOS 15 are
+covered by PowerShell 7. The first full native macOS job passed its readiness,
+cleanup, scanner self-test, repository scan, and whitespace steps in
+[PR #7 run 30216166105](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30216166105).
 
 ## Contributing
 

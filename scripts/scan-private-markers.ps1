@@ -833,8 +833,19 @@ if ($null -eq $gitExe) {
     ) ("isolated-worktree-pr-flow-git-" + [System.Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $gitIsolationRoot | Out-Null
     try {
+        # Git 自身の worktree 判定と、worktree root から -C までの prefix を
+        # 1 process で取得する。macOS では同じ物理 directory が /var/... と
+        # /private/var/... の別表記になり得るため、絶対 path の文字列比較を
+        # root identity に使わない。空 prefix なら exact root、非空なら
+        # subdirectory なので、部分 scan の fail-closed 境界は維持できる。
         $rootProbe = Invoke-ScannerGit `
-            -Arguments @('-C', $canonicalRoot, 'rev-parse', '--show-toplevel') `
+            -Arguments @(
+                '-C',
+                $canonicalRoot,
+                'rev-parse',
+                '--is-inside-work-tree',
+                '--show-prefix'
+            ) `
             -MaximumStandardOutputBytes 65536
         Assert-HealthyGitBoundary `
             -Result $rootProbe `
@@ -863,29 +874,39 @@ if ($null -eq $gitExe) {
                     -Bytes (Read-StableWorktreeBytes -FullPath $file.FullName -RelativePath $relative)
             }
         } else {
-            $reportedRootText = ConvertFrom-PrivateMarkerUtf8Bytes `
-                -Bytes $rootProbe.StandardOutputBytes `
-                -Context 'Git root probe stdout'
-            $reportedRootLines = @(
-                $reportedRootText -split '\r?\n' |
-                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            # 共通 decoder は text file 用に先頭 BOM を除去する。Git の固定
+            # ASCII protocolではBOMも不正recordなので、ここだけ正規化せず
+            # strict UTF-8 decodeし、Ordinal比較へそのまま渡す。
+            try {
+                $rootProbeText = [System.Text.UTF8Encoding]::new(
+                    $false,
+                    $true
+                ).GetString($rootProbe.StandardOutputBytes)
+            }
+            catch [System.Text.DecoderFallbackException] {
+                throw 'Git root probe stdout is not valid UTF-8.'
+            }
+            # exact 2 record と終端改行を要求する。空行除去で malformed
+            # record を正規化せず、NUL・追加 record・欠落改行を拒否する。
+            $rootProbeMatch = [regex]::Match(
+                $rootProbeText,
+                '\A(?<Inside>[^\x00\r\n]+)\r?\n(?<Prefix>[^\x00\r\n]*)\r?\n\z'
             )
-            if ($reportedRootLines.Count -ne 1) {
+            if (-not $rootProbeMatch.Success) {
                 throw 'Git root probe returned malformed output.'
             }
-            try {
-                $reportedRoot = [System.IO.Path]::GetFullPath(
-                    $reportedRootLines[0]
-                ).TrimEnd([char]92, [char]47)
-            }
-            catch {
-                throw 'Git root probe returned an invalid path.'
-            }
+            $insideWorkTree = $rootProbeMatch.Groups['Inside'].Value
+            $rootProbePrefix = $rootProbeMatch.Groups['Prefix'].Value
+            # PowerShell の culture-aware 比較は一部 Unicode format 文字を
+            # 無視し得る。Git の固定 ASCII record は Ordinal で厳密比較する。
             if (-not [string]::Equals(
-                $canonicalRoot,
-                $reportedRoot,
-                $pathComparison
+                $insideWorkTree,
+                'true',
+                [StringComparison]::Ordinal
             )) {
+                throw 'Scan path must be inside a Git worktree at its exact root.'
+            }
+            if ($rootProbePrefix.Length -ne 0) {
                 throw 'Scan path must be the exact Git worktree root; subdirectories are rejected.'
             }
 

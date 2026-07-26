@@ -66,9 +66,12 @@ against your session-start snapshot right after you begin work.
 
 This flow was hardened on Windows (PowerShell plus Git Bash), but the `git`
 and `gh` commands themselves are cross-platform. Where the shells differ,
-both PowerShell and POSIX examples are given. The Windows-specific pieces —
-directory junctions and their removal semantics — have POSIX symlink
-equivalents noted inline.
+both PowerShell and POSIX examples are given. CI includes PowerShell 7 jobs
+for the synthetic cleanup guards and private-marker scanner on Ubuntu 24.04
+and native macOS 15 in addition to the Windows hosts. All three jobs passed in
+[PR #7 run 30216166105](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30216166105).
+The Windows-specific pieces — directory junctions and their removal
+semantics — have POSIX symlink equivalents noted inline.
 
 ## When To Use
 

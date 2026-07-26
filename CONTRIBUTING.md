@@ -79,14 +79,17 @@ system/global configuration, hooks, and signing; fixes
 `rebase.updateRefs=false`; and snapshots, clears, then restores every ambient
 `GIT_*` variable.
 
-The scanner self-test also runs under both Windows hosts and under PowerShell
-7 on Ubuntu 24.04. It uses only disposable synthetic repositories and local
-processes. It verifies the sanitized Git child environment, binary standard
-streams, index/worktree provenance, final raw index equality, fail-closed
-index states, process-tree cleanup, and bounded diagnostics without contacting
-an external service or using real credentials. A lower-only test deadline
-also proves that an expired scan cannot emit a success result; callers cannot
-extend the production 120-second ceiling.
+The scanner self-test runs on both Windows hosts and on PowerShell 7 for
+Ubuntu 24.04 and native macOS 15. All three jobs passed in
+[PR #7 run 30216166105](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30216166105).
+The suite uses only disposable
+synthetic repositories and local processes. It verifies the sanitized Git
+child environment, binary standard streams, index/worktree provenance, final
+raw index equality, fail-closed index states, process-tree cleanup, and
+bounded diagnostics without contacting an external service or using real
+credentials. A lower-only test deadline also proves that an expired scan
+cannot emit a success result; callers cannot extend the production
+120-second ceiling.
 
 ## Pull Request Expectations
 
