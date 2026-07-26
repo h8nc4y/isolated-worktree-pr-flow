@@ -320,6 +320,9 @@ covered by PowerShell 7. The first full native macOS job passed its readiness,
 cleanup, scanner self-test, repository scan, and whitespace steps in
 [PR #7 run 30216166105](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30216166105).
 
+For the latest verified maintenance state, decisions, boundaries, and next
+step, read [HANDOFF.md](HANDOFF.md).
+
 ## Contributing
 
 Contributions are welcome when they make the flow safer, clearer, or easier
