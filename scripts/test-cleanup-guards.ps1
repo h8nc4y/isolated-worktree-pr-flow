@@ -440,6 +440,11 @@ try {
     Invoke-Git -Repository $rebaseRepository -Arguments @('switch', 'main') | Out-Null
     Invoke-Git -Repository $rebaseRepository -Arguments @('merge', '--ff-only', 'rebased-result') | Out-Null
 
+    # Fail at the rewritten-history premise itself so later topology checks
+    # cannot be the only signal that the synthetic rebase actually rewrote it.
+    Assert-NotEqual -Actual $rebaseMergeCommitOid -Expected $rebaseHeadRefOid `
+        -Message 'The landed rebase commit must differ from the original PR head'
+
     $rebaseBranchAncestor = Invoke-Git -Repository $rebaseRepository `
         -Arguments @('merge-base', '--is-ancestor', 'fix/rebase', 'main') `
         -AllowedExitCodes @(0, 1)
