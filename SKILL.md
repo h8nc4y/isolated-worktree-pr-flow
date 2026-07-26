@@ -290,7 +290,12 @@ passed, re-run the checks immediately before executing (field-tested).
      [PR #2](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/2):
      `MERGED`, landed `mergeCommit`, unchanged local and remote tips matching
      `headRefOid`, guarded local `-D`, and explicit remote deletion all passed.
-     Live GitHub rebase cleanup remains unverified.
+     The live GitHub rebase path was measured on 2026-07-26 with
+     [PR #5](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/5):
+     `MERGED`, a rewritten landed `mergeCommit`, the original head outside the
+     default-branch ancestry, unchanged local and remote tips matching
+     `headRefOid`, guarded local `-D`, explicit remote deletion, and owned
+     worktree cleanup all passed while the main checkout stayed unchanged.
 
 3. The worktree and branch being deleted are ones this flow created — never
    another agent's or a human's.
@@ -382,7 +387,7 @@ Windows development machines — every rule above traces back to an observed
 failure or a verified recovery, not to speculation. Wording like
 "field-tested" marks behavior that was actually hit and worked around in
 practice. Items that are not yet validated in live operation are explicitly
-marked as unverified — notably guard 2b's GitHub-side rebase operation (the
-squash path is live-verified, and both local topologies and rejection paths
-have synthetic regression coverage) and platform-specific link-following
-behavior during recursive deletion.
+marked as unverified — notably platform-specific link-following behavior
+during recursive deletion. Guard 2b's GitHub-side squash and rebase operations
+are live-verified, and both local topologies and rejection paths have
+synthetic regression coverage.

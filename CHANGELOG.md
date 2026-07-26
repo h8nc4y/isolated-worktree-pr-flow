@@ -52,11 +52,16 @@ The format loosely follows Keep a Changelog conventions.
 - Pinned the GitHub Actions checkout step to the reviewed `v5` commit and
   added finite job timeouts. Readiness validation now binds every runner,
   timeout, checkout revision, and step to its owning workflow job.
-- Recorded live GitHub squash-merge cleanup evidence from
+- Recorded live GitHub guard 2b cleanup evidence from
   [PR #2](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/2):
   `MERGED` state, landed `mergeCommit`, unchanged local and remote tips
   matching `headRefOid`, guarded local `-D`, and explicit remote-branch
-  deletion. Live GitHub rebase-merge cleanup remains unverified.
+  deletion after a squash merge. Rebase-merge evidence from
+  [PR #5](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/5)
+  additionally recorded a rewritten landed `mergeCommit`, the original head
+  outside the default-branch ancestry, unchanged local and remote tips matching
+  `headRefOid`, guarded local `-D`, explicit remote-branch deletion, and owned
+  worktree cleanup while the main checkout stayed unchanged.
 
 ## 0.1.0 - 2026-07-16
 
