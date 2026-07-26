@@ -259,10 +259,10 @@ both PowerShell 7 and Windows PowerShell 5.1.
 
 The private-marker self-test also retains the PowerShell host that starts it,
 so the `powershell` and `pwsh` commands above are distinct compatibility
-measurements. GitHub Actions is configured to run that full scanner suite
-under both Windows hosts and under PowerShell 7 on Ubuntu 24.04 and native
-macOS 15. The native macOS result remains pending until the first pull-request
-run completes. The first bounded-process invocation passes the exact binary
+measurements. GitHub Actions runs that full scanner suite under both Windows
+hosts and under PowerShell 7 on Ubuntu 24.04 and native macOS 15. All three
+jobs passed in [PR #7 run 30216166105](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30216166105).
+The first bounded-process invocation passes the exact binary
 byte sequence `00/80/FF` through stdin and requires the same sequence
 independently on stdout and stderr.
 
@@ -316,8 +316,9 @@ The GitHub Actions workflow is configured to run the readiness validator,
 cleanup guards, scanner self-test, repository scan, and committed-tree
 whitespace check on pull requests and pushes to `main`. Windows covers
 PowerShell 7 and Windows PowerShell 5.1; Ubuntu 24.04 and native macOS 15 are
-configured for PowerShell 7. Native macOS remains unverified until the first
-pull-request run completes.
+covered by PowerShell 7. The first full native macOS job passed its readiness,
+cleanup, scanner self-test, repository scan, and whitespace steps in
+[PR #7 run 30216166105](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30216166105).
 
 ## Contributing
 

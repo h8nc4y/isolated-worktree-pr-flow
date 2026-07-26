@@ -56,8 +56,9 @@ The format loosely follows Keep a Changelog conventions.
   `00/80/FF` transport across stdin, stdout, and stderr.
 - Added a finite native macOS 15 validation job configured to run the
   readiness contract, cleanup guards, scanner self-test, repository scan, and
-  committed-tree whitespace check under PowerShell 7. Its first native result
-  remains pending until the pull-request workflow runs.
+  committed-tree whitespace check under PowerShell 7. The Windows, Ubuntu,
+  and native macOS jobs all passed in
+  [PR #7 run 30216166105](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30216166105).
 - Pinned the GitHub Actions checkout step to the reviewed `v5` commit and
   added finite job timeouts. Readiness validation now binds every runner,
   timeout, checkout revision, and step to its owning workflow job.
