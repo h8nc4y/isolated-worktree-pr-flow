@@ -4,13 +4,13 @@
 
 ## Current state
 
-- 最新の機能変更は [PR #7](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/7) で `main` へ squash merge 済み。
-- merge commit `3b2cd191bf8a4c7d1518370f8c9c3af34a1015ac` の
-  [post-main run 30216691602](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30216691602)
+- 最新の機能変更は [PR #9](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/9) で `main` へ squash merge 済み。
+- merge commit `38129ac068ace39109caa12e20d70fcaa0d9ec54` の
+  [post-main run 30237184620](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30237184620)
   は Windows、Ubuntu 24.04、native macOS 15 の全 job・全 step が成功。
 - open PR / 必須の既知修正: この handoff 作成時点ではなし。
 
-## Current goal (Class M)
+## Latest delivered work (Class M)
 
 - 目的: private-marker scanner が所有する Git isolation root の再帰削除を、
   OS temp 直下の exact-prefix + GUID 名を持つ通常directoryだけに限定する。
@@ -21,7 +21,7 @@
   directory差替え / reparse差替えを確認。初回review P1のcheck/use race修正後、
   PowerShell 7 / 5.1のscanner self-test、両hostのcleanup guards（各16
   assertions）、readiness、Gitleaks、Semgrep、whitespaceはlocalで成功。
-  再review、GitHub CI / merge後mainは未確認。
+  独立再reviewはP0-P3なしでclearance、PR CIとmerge後main CIも全job成功。
 
 ## Success metrics
 
@@ -48,6 +48,9 @@
   NUL、invalid UTF-8、先頭BOM、Unicode format文字、非空prefixは拒否する。
 - 同一host上のscanner self-testは直列実行する。並列runは互いのtemp isolation
   rootを検知して意図どおりfail closedする。
+- scanner所有のisolation rootは、OS temp直下のexact-prefix + GUID名に加え、
+  run固有owner markerを持つ通常directoryだけを削除対象にする。初回検証後も
+  削除直前にrootとowner markerを再取得し、差替えを検知したらfail closedする。
 
 ## Verification commands
 
