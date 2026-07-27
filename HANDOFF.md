@@ -10,6 +10,19 @@
   は Windows、Ubuntu 24.04、native macOS 15 の全 job・全 step が成功。
 - open PR / 必須の既知修正: この handoff 作成時点ではなし。
 
+## Current goal (Class M)
+
+- 目的: private-marker scanner が所有する Git isolation root の再帰削除を、
+  OS temp 直下の exact-prefix + GUID 名を持つ通常directoryだけに限定する。
+- 影響: hostile Git childなどがcleanup前にrootを別path・leaf・reparse pointへ
+  置換した場合は、run固有owner markerと削除直前の再取得により、再帰削除せず
+  固定診断でfail closedする。
+- 検証: synthetic temp fixtureでvalid / wrong-name / nested / regular
+  directory差替え / reparse差替えを確認。初回review P1のcheck/use race修正後、
+  PowerShell 7 / 5.1のscanner self-test、両hostのcleanup guards（各16
+  assertions）、readiness、Gitleaks、Semgrep、whitespaceはlocalで成功。
+  再review、GitHub CI / merge後mainは未確認。
+
 ## Success metrics
 
 - workflow は Windows、Ubuntu 24.04、native macOS 15 の3 jobを有限時間で実行する。

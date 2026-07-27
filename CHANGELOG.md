@@ -59,6 +59,13 @@ The format loosely follows Keep a Changelog conventions.
   committed-tree whitespace check under PowerShell 7. The Windows, Ubuntu,
   and native macOS jobs all passed in
   [PR #7 run 30216166105](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30216166105).
+- Guarded every recursive cleanup of the scanner's per-run Git isolation
+  root with an OS-aware direct-child check, an exact project prefix plus
+  32-hex GUID name, a separate per-run owner marker, and regular non-reparse
+  directory validation reacquired immediately before deletion. Synthetic
+  valid, wrong-name, nested, regular-directory replacement, and
+  junction/symlink interleaving fixtures keep the destructive boundary
+  covered.
 - Pinned the GitHub Actions checkout step to the reviewed `v5` commit and
   added finite job timeouts. Readiness validation now binds every runner,
   timeout, checkout revision, and step to its owning workflow job.

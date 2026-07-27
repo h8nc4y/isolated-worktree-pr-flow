@@ -92,6 +92,13 @@ dedicated session/process group before its first instruction. Cleanup signals
 the whole group with `kill(2)` and accepts only success or `ESRCH`; permission
 and other signal failures remain fail closed.
 
+The scanner removes its own Git isolation root only after revalidating an
+OS-aware direct-child boundary, the exact project prefix plus 32-hex GUID
+name, a separate per-run owner marker, and a regular non-reparse directory.
+Root attributes and ownership are reacquired immediately before recursive
+deletion. Missing, leaf, nested, different-directory, junction, or
+symbolic-link replacements fail closed before recursive deletion.
+
 Before output, control/format characters, bidi controls, zero-width
 characters, and Unicode line/paragraph separators in diagnostic fields are
 escaped. Missing or otherwise unresolvable user paths emit only a fixed code,
