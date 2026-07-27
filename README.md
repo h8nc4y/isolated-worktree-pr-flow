@@ -266,6 +266,17 @@ The first bounded-process invocation passes the exact binary
 byte sequence `00/80/FF` through stdin and requires the same sequence
 independently on stdout and stderr.
 
+The scanner's own per-run Git isolation root is recursively removed only
+when it is still a regular, non-reparse directory whose exact prefix and
+32-hex GUID name identify it as a direct child of the OS temporary directory.
+A separate per-run owner marker is checked both after the first inspection
+and immediately before recursive deletion. A missing, renamed, nested, leaf,
+regular-directory replacement, junction, or symbolic-link replacement fails
+closed instead of widening recursive cleanup. The self-test exercises the
+valid, wrong-name, nested, owner-replacement, and reparse-point paths with
+synthetic temporary fixtures and verifies that an external target remains
+intact.
+
 Git-backed marker scanning requires the exact repository root. Git proves
 that boundary semantically with `--is-inside-work-tree` plus an empty
 `--show-prefix`; it does not compare absolute path spellings, which may alias

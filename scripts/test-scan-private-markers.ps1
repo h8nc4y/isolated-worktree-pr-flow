@@ -302,6 +302,157 @@ $preexistingScannerIsolationRoots = @(
 )
 
 try {
+    # scanner自身のrecursive cleanupは、OS temp直下の専用GUID directoryだけを
+    # 所有物として扱う。広いtemp root、wrong-name、nested pathは削除候補にしない。
+    $cleanupTemporaryParent = [System.IO.Path]::GetTempPath()
+    $validCleanupRoot = Join-Path `
+        $cleanupTemporaryParent `
+        ("isolated-worktree-pr-flow-git-" + [Guid]::NewGuid().ToString('N'))
+    $wrongNameCleanupRoot = Join-Path `
+        $cleanupTemporaryParent `
+        'isolated-worktree-pr-flow-git-not-a-guid'
+    $nestedCleanupRoot = Join-Path `
+        $tempRoot `
+        ("isolated-worktree-pr-flow-git-" + [Guid]::NewGuid().ToString('N'))
+    if (-not (Test-PrivateMarkerGitIsolationRootBoundary `
+            -Root $validCleanupRoot `
+            -TemporaryParent $cleanupTemporaryParent)) {
+        Add-Failure 'Expected the direct GUID-named Git isolation root to satisfy the cleanup boundary.'
+    }
+    if (Test-PrivateMarkerGitIsolationRootBoundary `
+            -Root $cleanupTemporaryParent `
+            -TemporaryParent $cleanupTemporaryParent) {
+        Add-Failure 'Expected the OS temporary root itself to fail the Git isolation cleanup boundary.'
+    }
+    if (Test-PrivateMarkerGitIsolationRootBoundary `
+            -Root $wrongNameCleanupRoot `
+            -TemporaryParent $cleanupTemporaryParent) {
+        Add-Failure 'Expected a wrong-name Git isolation root to fail the cleanup boundary.'
+    }
+    if (Test-PrivateMarkerGitIsolationRootBoundary `
+            -Root $nestedCleanupRoot `
+            -TemporaryParent $cleanupTemporaryParent) {
+        Add-Failure 'Expected a nested Git isolation root to fail the direct-child cleanup boundary.'
+    }
+
+    $validCleanupOwnerId = [Guid]::NewGuid().ToString('N')
+    New-PrivateMarkerGitIsolationRoot `
+        -Root $validCleanupRoot `
+        -TemporaryParent $cleanupTemporaryParent `
+        -OwnerId $validCleanupOwnerId
+    Set-Content `
+        -LiteralPath (Join-Path $validCleanupRoot 'owned.txt') `
+        -Value 'synthetic owned cleanup fixture' `
+        -Encoding UTF8
+    Remove-PrivateMarkerGitIsolationRoot `
+        -Root $validCleanupRoot `
+        -TemporaryParent $cleanupTemporaryParent `
+        -OwnerId $validCleanupOwnerId
+    if (Test-Path -LiteralPath $validCleanupRoot) {
+        Add-Failure 'Expected the valid owned Git isolation root to be removed.'
+    }
+
+    # 最初のsnapshot後に別のregular directoryへ置換し、owner markerの
+    # 再照合がraw recursive deleteより先に拒否することを固定する。
+    $directoryReplacementRoot = Join-Path `
+        $cleanupTemporaryParent `
+        ("isolated-worktree-pr-flow-git-" + [Guid]::NewGuid().ToString('N'))
+    $directoryReplacementOwnerId = [Guid]::NewGuid().ToString('N')
+    New-PrivateMarkerGitIsolationRoot `
+        -Root $directoryReplacementRoot `
+        -TemporaryParent $cleanupTemporaryParent `
+        -OwnerId $directoryReplacementOwnerId
+    $directoryOwnerMarker = Join-Path `
+        $directoryReplacementRoot `
+        '.isolated-worktree-pr-flow-owner'
+    $replaceWithDirectory = {
+        [System.IO.File]::Delete($directoryOwnerMarker)
+        [System.IO.Directory]::Delete($directoryReplacementRoot)
+        [void][System.IO.Directory]::CreateDirectory($directoryReplacementRoot)
+    }.GetNewClosure()
+    try {
+        $directoryReplacementRejected = $false
+        try {
+            Remove-PrivateMarkerGitIsolationRoot `
+                -Root $directoryReplacementRoot `
+                -TemporaryParent $cleanupTemporaryParent `
+                -OwnerId $directoryReplacementOwnerId `
+                -BeforeFinalValidation $replaceWithDirectory
+        }
+        catch {
+            $directoryReplacementRejected =
+                $_.Exception.Message -match 'ownership changed'
+        }
+        if (-not $directoryReplacementRejected) {
+            Add-Failure 'Expected a check/use regular-directory replacement to fail owner validation.'
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $directoryReplacementRoot) {
+            [System.IO.Directory]::Delete($directoryReplacementRoot)
+        }
+    }
+
+    # 最初のsnapshot後にroot自体をjunction/symlinkへ置換した場合も、
+    # 最終属性照合で再帰削除せず、external targetを保持する。
+    $reparseCleanupRoot = Join-Path `
+        $cleanupTemporaryParent `
+        ("isolated-worktree-pr-flow-git-" + [Guid]::NewGuid().ToString('N'))
+    $reparseCleanupOwnerId = [Guid]::NewGuid().ToString('N')
+    $reparseCleanupTarget = Join-Path $tempRoot 'git isolation external target'
+    $reparseCleanupSentinel = Join-Path $reparseCleanupTarget 'preserve.txt'
+    New-Item -ItemType Directory -Path $reparseCleanupTarget | Out-Null
+    Set-Content `
+        -LiteralPath $reparseCleanupSentinel `
+        -Value 'synthetic external target' `
+        -Encoding UTF8
+    New-PrivateMarkerGitIsolationRoot `
+        -Root $reparseCleanupRoot `
+        -TemporaryParent $cleanupTemporaryParent `
+        -OwnerId $reparseCleanupOwnerId
+    $reparseOwnerMarker = Join-Path `
+        $reparseCleanupRoot `
+        '.isolated-worktree-pr-flow-owner'
+    try {
+        $reparseType = if (Test-PrivateMarkerWindowsHost) {
+            'Junction'
+        } else {
+            'SymbolicLink'
+        }
+        $replaceWithReparse = {
+            [System.IO.File]::Delete($reparseOwnerMarker)
+            [System.IO.Directory]::Delete($reparseCleanupRoot)
+            New-Item `
+                -ItemType $reparseType `
+                -Path $reparseCleanupRoot `
+                -Target $reparseCleanupTarget |
+                Out-Null
+        }.GetNewClosure()
+        $reparseRejected = $false
+        try {
+            Remove-PrivateMarkerGitIsolationRoot `
+                -Root $reparseCleanupRoot `
+                -TemporaryParent $cleanupTemporaryParent `
+                -OwnerId $reparseCleanupOwnerId `
+                -BeforeFinalValidation $replaceWithReparse
+        }
+        catch {
+            $reparseRejected =
+                $_.Exception.Message -match 'leaf or reparse point'
+        }
+        if (-not $reparseRejected) {
+            Add-Failure 'Expected a reparse-point Git isolation root to fail closed before recursive cleanup.'
+        }
+        if (-not (Test-Path -LiteralPath $reparseCleanupSentinel -PathType Leaf)) {
+            Add-Failure 'Expected rejected Git isolation cleanup to preserve the external synthetic target.'
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $reparseCleanupRoot) {
+            [System.IO.Directory]::Delete($reparseCleanupRoot)
+        }
+    }
+
     # process helperの初回呼出しを文字列化しやすいASCIIでは済ませない。
     # 00/80/FFをstdinから受け、そのままstdout/stderrへ返すfixtureで、
     # Windowsのsuspended CreateProcessW経路を含む3本のpipeが最初から

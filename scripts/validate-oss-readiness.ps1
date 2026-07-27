@@ -56,6 +56,30 @@ function Assert-FileContains {
     }
 }
 
+function Assert-FilePatternCount {
+    param(
+        [string]$RelativePath,
+        [string]$Pattern,
+        [int]$ExpectedCount,
+        [string]$Description
+    )
+
+    $filePath = Get-RepoFilePath -RelativePath $RelativePath
+    if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+        Add-Failure "Cannot inspect missing file: $RelativePath ($Description)"
+        return
+    }
+
+    $content = Get-Content -LiteralPath $filePath -Raw
+    $actualCount = [regex]::Matches($content, $Pattern).Count
+    if ($actualCount -ne $ExpectedCount) {
+        Add-Failure (
+            "$RelativePath must contain exactly $ExpectedCount $Description " +
+            "(actual: $actualCount)."
+        )
+    }
+}
+
 function Assert-FileHasUtf8Bom {
     param([string]$RelativePath)
 
@@ -737,10 +761,29 @@ Assert-FileContains -RelativePath 'scripts/scan-private-markers.ps1' -Pattern 'm
 Assert-FileContains -RelativePath 'scripts/scan-private-markers.ps1' -Pattern "'--is-inside-work-tree'" -Description 'Git semantic worktree-root proof'
 Assert-FileContains -RelativePath 'scripts/scan-private-markers.ps1' -Pattern "'--show-prefix'" -Description 'Git root-relative prefix proof'
 Assert-FileContains -RelativePath 'scripts/scan-private-markers.ps1' -Pattern '\[StringComparison\]::Ordinal' -Description 'ordinal Git root record comparison'
+Assert-FileContains -RelativePath 'scripts/private-marker-process.ps1' -Pattern 'function\s+Test-PrivateMarkerGitIsolationRootBoundary' -Description 'owned Git isolation-root boundary'
+Assert-FileContains -RelativePath 'scripts/private-marker-process.ps1' -Pattern 'function\s+New-PrivateMarkerGitIsolationRoot' -Description 'owned Git isolation-root initializer'
+Assert-FileContains -RelativePath 'scripts/private-marker-process.ps1' -Pattern '\^isolated-worktree-pr-flow-git-\[0-9a-f\]\{32\}\$' -Description 'exact Git isolation-root prefix and GUID contract'
+Assert-FileContains -RelativePath 'scripts/private-marker-process.ps1' -Pattern 'FileAttributes\]::ReparsePoint' -Description 'Git isolation-root reparse-point rejection'
+Assert-FileContains -RelativePath 'scripts/private-marker-process.ps1' -Pattern '\.isolated-worktree-pr-flow-owner' -Description 'Git isolation-root owner marker'
+Assert-FilePatternCount `
+    -RelativePath 'scripts/private-marker-process.ps1' `
+    -Pattern '(?m)^\s*Assert-PrivateMarkerGitIsolationRootState\b' `
+    -ExpectedCount 2 `
+    -Description 'pre-cleanup Git isolation-root state validations'
+Assert-FilePatternCount `
+    -RelativePath 'scripts/scan-private-markers.ps1' `
+    -Pattern '(?m)^\s*Remove-PrivateMarkerGitIsolationRoot\b' `
+    -ExpectedCount 3 `
+    -Description 'guarded Git isolation-root cleanup callsites'
 Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'private-marker-process\.ps1' -Description 'shared bounded process boundary in scanner self-test'
 Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'PosixSignal.*IsSuccessfulResult' -Description 'POSIX errno cleanup regression coverage'
 Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern '\[byte\[\]\]\$binaryProbeBytes\s*=\s*@\(0x00,\s*0x80,\s*0xFF\)' -Description 'exact binary standard-stream fixture'
 Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'root-probe-zero-width-space' -Description 'Unicode format root-probe regression coverage'
+Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'wrong-name Git isolation root' -Description 'wrong-name Git isolation-root cleanup rejection'
+Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'reparse-point Git isolation root' -Description 'reparse-point Git isolation-root cleanup rejection'
+Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'BeforeFinalValidation' -Description 'deterministic Git isolation-root check/use interleaving seam'
+Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'regular-directory replacement' -Description 'regular-directory ownership replacement regression'
 Assert-FirstTopLevelProcessInvocationIsBinary `
     -RelativePath 'scripts/test-scan-private-markers.ps1'
 Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'scan-diagnostic-output-limit' -Description 'finding output amplification regression coverage'
