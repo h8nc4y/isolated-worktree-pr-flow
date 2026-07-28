@@ -222,6 +222,393 @@ function Assert-FinalScanDeadlineContract {
     }
 }
 
+function Test-PrivateMarkerMillisecondWaitContract {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Source
+    )
+
+    $tokens = $null
+    $parseErrors = $null
+    $sourceAst = [System.Management.Automation.Language.Parser]::ParseInput(
+        $Source,
+        [ref]$tokens,
+        [ref]$parseErrors
+    )
+    if (@($parseErrors).Count -ne 0) {
+        return $false
+    }
+    $normalizeNewlines = {
+        param([string]$Text)
+        return $Text.Replace("`r`n", "`n").Replace("`r", "`n")
+    }
+
+    # 実際にAdd-Typeへ渡るC# sourceだけを選び、外側のcomment/string decoyを除外する。
+    $containedTypeSources = @(
+        foreach ($command in @($sourceAst.FindAll({
+            param($node)
+            $node -is
+                [System.Management.Automation.Language.CommandAst] -and
+                $node.GetCommandName() -ceq 'Add-Type'
+        }, $true))) {
+            $elements = @($command.CommandElements)
+            if ($elements.Count -ne 3 -or
+                $elements[1] -isnot
+                    [System.Management.Automation.Language.CommandParameterAst] -or
+                $elements[1].ParameterName -cne 'TypeDefinition' -or
+                $elements[2] -isnot
+                    [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                continue
+            }
+            $typeSource = [string]$elements[2].Value
+            if ($typeSource.Contains('public sealed class ContainedProcess')) {
+                $typeSource
+            }
+        }
+    )
+    if ($containedTypeSources.Count -ne 1) {
+        return $false
+    }
+
+    # C# wrapperは受け取ったmillisecond値を唯一のWin32 waitへ直接渡す。
+    $expectedWaitMethod = @'
+        public bool WaitForExit(int milliseconds)
+        {
+            return WaitForSingleObject(
+                processHandle,
+                (uint)milliseconds) == WaitObject0;
+        }
+'@
+    $containedTypeSource = & $normalizeNewlines $containedTypeSources[0]
+    $normalizedWaitMethod = & $normalizeNewlines $expectedWaitMethod
+    $waitMethodIndex = $containedTypeSource.IndexOf(
+        $normalizedWaitMethod,
+        [System.StringComparison]::Ordinal
+    )
+    if ($waitMethodIndex -lt 0 -or
+        $waitMethodIndex -ne $containedTypeSource.LastIndexOf(
+            $normalizedWaitMethod,
+            [System.StringComparison]::Ordinal
+        ) -or
+        [regex]::Matches(
+            $containedTypeSource,
+            '(?m)^[ \t]*public bool WaitForExit\s*\('
+        ).Count -ne 1) {
+        return $false
+    }
+    $expectedWaitImport = @'
+        private static extern uint WaitForSingleObject(
+            IntPtr handle,
+            uint milliseconds);
+'@
+    $normalizedWaitImport = & $normalizeNewlines $expectedWaitImport
+    $waitImportIndex = $containedTypeSource.IndexOf(
+        $normalizedWaitImport,
+        [System.StringComparison]::Ordinal
+    )
+    if ($waitImportIndex -lt 0 -or
+        $waitImportIndex -ne $containedTypeSource.LastIndexOf(
+            $normalizedWaitImport,
+            [System.StringComparison]::Ordinal
+        )) {
+        return $false
+    }
+
+    # pure helper全体をexact化し、100ms sliceと残予算の小さい方だけを返す。
+    $expectedRemainingFunction = @'
+function Get-PrivateMarkerPollWaitMilliseconds {
+    param(
+        [Parameter(Mandatory = $true)]
+        [long]$ElapsedMilliseconds,
+
+        [Parameter(Mandatory = $true)]
+        [int]$TimeoutMilliseconds
+    )
+
+    $remaining = [long]$TimeoutMilliseconds - $ElapsedMilliseconds
+    if ($remaining -le 0) {
+        return 0
+    }
+    return [int][Math]::Min(100L, $remaining)
+}
+'@
+    $remainingFunctions = @($sourceAst.FindAll({
+        param($node)
+        $node -is
+            [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Get-PrivateMarkerPollWaitMilliseconds'
+    }, $true))
+    if ($remainingFunctions.Count -ne 1 -or
+        (& $normalizeNewlines $remainingFunctions[0].Extent.Text) -cne
+            (& $normalizeNewlines $expectedRemainingFunction)) {
+        return $false
+    }
+
+    $invokeFunctions = @($sourceAst.FindAll({
+        param($node)
+        $node -is
+            [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Invoke-PrivateMarkerProcess'
+    }, $true))
+    if ($invokeFunctions.Count -ne 1) {
+        return $false
+    }
+
+    # receiver名で先に絞らず、operation function内のWaitForExitを全件列挙する。
+    # alias receiverへ追加waitを隠しても、総数・順序・引数のexact契約で拒否する。
+    $allInvokeMemberCalls = @($invokeFunctions[0].Body.FindAll({
+        param($node)
+        $node -is
+            [System.Management.Automation.Language.InvokeMemberExpressionAst]
+    }, $true))
+    # dynamic memberはruntimeでWaitForExitへ解決し得るため、raw例外にせずfail closedする。
+    if (@($allInvokeMemberCalls | Where-Object {
+        $_.Member -isnot
+            [System.Management.Automation.Language.StringConstantExpressionAst]
+    }).Count -gt 0) {
+        return $false
+    }
+    $allWaitCalls = @($allInvokeMemberCalls | Where-Object {
+        [string]::Equals(
+            [string]$_.Member.Value,
+            'WaitForExit',
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    } | Sort-Object { $_.Extent.StartOffset })
+    $expectedWaitReceivers = @('containedProcess', 'process')
+    if ($allWaitCalls.Count -ne $expectedWaitReceivers.Count) {
+        return $false
+    }
+    for ($waitIndex = 0;
+        $waitIndex -lt $expectedWaitReceivers.Count;
+        $waitIndex++) {
+        $waitCall = $allWaitCalls[$waitIndex]
+        if ($waitCall.Expression -isnot
+                [System.Management.Automation.Language.VariableExpressionAst] -or
+            $waitCall.Expression.VariablePath.UserPath -cne
+                $expectedWaitReceivers[$waitIndex] -or
+            $waitCall.Arguments.Count -ne 1 -or
+            $waitCall.Arguments[0] -isnot
+                [System.Management.Automation.Language.VariableExpressionAst] -or
+            $waitCall.Arguments[0].VariablePath.UserPath -cne
+                'remaining') {
+            return $false
+        }
+    }
+    $containedWaitCall = $allWaitCalls[0]
+    $managedWaitCall = $allWaitCalls[1]
+
+    # 最後のremaining代入から両waitまでを実AST extentでexact比較する。
+    $expectedWaitRegion = @'
+            $remaining = Get-PrivateMarkerPollWaitMilliseconds `
+                -ElapsedMilliseconds $clock.ElapsedMilliseconds `
+                -TimeoutMilliseconds $TimeoutMilliseconds
+            if ($remaining -le 0) {
+                break
+            }
+            if ($null -ne $containedProcess) {
+                [void]$containedProcess.WaitForExit($remaining)
+            } else {
+                [void]$process.WaitForExit($remaining)
+'@
+    $remainingAssignments = @($invokeFunctions[0].Body.FindAll({
+        param($node)
+        $node -is
+            [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $node.Left -is
+                [System.Management.Automation.Language.VariableExpressionAst] -and
+            $node.Left.VariablePath.UserPath -ceq 'remaining'
+    }, $true) | Where-Object {
+        $_.Extent.EndOffset -le $containedWaitCall.Extent.StartOffset
+    } | Sort-Object { $_.Extent.StartOffset })
+    if ($remainingAssignments.Count -eq 0 -or
+        $managedWaitCall.Extent.StartOffset -le
+            $containedWaitCall.Extent.StartOffset) {
+        return $false
+    }
+    $lastRemainingAssignment = $remainingAssignments[-1]
+    $waitRegionStartOffset =
+        $lastRemainingAssignment.Extent.StartOffset -
+        ($lastRemainingAssignment.Extent.StartColumnNumber - 1)
+    $actualWaitRegion = $Source.Substring(
+        $waitRegionStartOffset,
+        $managedWaitCall.Extent.EndOffset - $waitRegionStartOffset
+    )
+    return (& $normalizeNewlines $actualWaitRegion) -ceq
+        (& $normalizeNewlines $expectedWaitRegion)
+}
+
+function Assert-PrivateMarkerMillisecondWaitContract {
+    param([string]$RelativePath)
+
+    $filePath = Get-RepoFilePath -RelativePath $RelativePath
+    if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+        Add-Failure "Cannot inspect missing file: $RelativePath (millisecond wait contract)"
+        return
+    }
+    $source = [System.IO.File]::ReadAllText($filePath)
+    if (-not (Test-PrivateMarkerMillisecondWaitContract -Source $source)) {
+        Add-Failure '[timeout/millisecond-wait-contract] Expected one unrounded 100ms-or-remaining wait path.'
+        return
+    }
+
+    # current sourceをmemory上だけで敵対変形し、文字列一致によるfalse greenを防ぐ。
+    $lineEnding = if ($source.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $waitMethod = @'
+        public bool WaitForExit(int milliseconds)
+        {
+            return WaitForSingleObject(
+                processHandle,
+                (uint)milliseconds) == WaitObject0;
+        }
+'@
+    $waitMethodForSource = $waitMethod.Replace("`n", $lineEnding)
+    $roundedCSharpSource = $source.Replace(
+        '                (uint)milliseconds) == WaitObject0;',
+        '                (uint)(Math.Ceiling(milliseconds / 1000.0) * 1000)) == WaitObject0;'
+    )
+    $expectedWaitRegion = @'
+            $remaining = Get-PrivateMarkerPollWaitMilliseconds `
+                -ElapsedMilliseconds $clock.ElapsedMilliseconds `
+                -TimeoutMilliseconds $TimeoutMilliseconds
+            if ($remaining -le 0) {
+                break
+            }
+            if ($null -ne $containedProcess) {
+                [void]$containedProcess.WaitForExit($remaining)
+            } else {
+                [void]$process.WaitForExit($remaining)
+'@
+    $waitRegionForSource = $expectedWaitRegion.Replace("`n", $lineEnding)
+    $roundedReassignment =
+        '            $remaining = [int]([Math]::Ceiling(' +
+        '$remaining / 1000.0) * 1000)'
+    $roundedRegion = $waitRegionForSource.Replace(
+        '            if ($remaining -le 0) {',
+        $roundedReassignment + $lineEnding +
+            '            if ($remaining -le 0) {'
+    )
+    $extraRoundedCall =
+        '                [void]$containedProcess.WaitForExit(' +
+        '[int]([Math]::Ceiling($remaining / 1000.0) * 1000))'
+    $mutations = @(
+        [pscustomobject]@{
+            Label = '[timeout/millisecond-caller-rounding-mutation]'
+            Source = $source.Replace(
+                '$containedProcess.WaitForExit($remaining)',
+                '$containedProcess.WaitForExit([int]([Math]::Ceiling(' +
+                    '$remaining / 1000.0) * 1000))'
+            )
+        },
+        [pscustomobject]@{
+            Label = '[timeout/millisecond-helper-rounding-mutation]'
+            Source = $source.Replace(
+                'return [int][Math]::Min(100L, $remaining)',
+                'return [int]([Math]::Ceiling($remaining / 1000.0) * 1000)'
+            )
+        },
+        [pscustomobject]@{
+            Label = '[timeout/millisecond-helper-overslice-mutation]'
+            Source = $source.Replace(
+                'return [int][Math]::Min(100L, $remaining)',
+                'return [int][Math]::Min(1000L, $remaining)'
+            )
+        },
+        [pscustomobject]@{
+            Label = '[timeout/millisecond-comment-decoy-mutation]'
+            Source = $source.Replace(
+                $waitRegionForSource,
+                '            <#' + $lineEnding +
+                    $waitRegionForSource + $lineEnding +
+                    '            #>' + $lineEnding +
+                    $roundedRegion
+            )
+        },
+        [pscustomobject]@{
+            Label = '[timeout/millisecond-string-decoy-mutation]'
+            Source = $source.Replace(
+                $waitRegionForSource,
+                "            `$millisecondWaitDecoy = @'" +
+                    $lineEnding + $waitRegionForSource + $lineEnding +
+                    "'@" + $lineEnding + $roundedRegion
+            )
+        },
+        [pscustomobject]@{
+            Label = '[timeout/millisecond-csharp-comment-decoy-mutation]'
+            Source = $roundedCSharpSource + $lineEnding +
+                '<#' + $lineEnding + $waitMethodForSource +
+                $lineEnding + '#>' + $lineEnding
+        },
+        [pscustomobject]@{
+            Label = '[timeout/millisecond-csharp-string-decoy-mutation]'
+            Source = $roundedCSharpSource + $lineEnding +
+                "`$millisecondWaitMethodDecoy = @'" + $lineEnding +
+                $waitMethodForSource + $lineEnding + "'@" + $lineEnding
+        },
+        [pscustomobject]@{
+            Label = '[timeout/millisecond-extra-wait-mutation]'
+            Source = $source.Replace(
+                '                [void]$containedProcess.WaitForExit($remaining)',
+                '                [void]$containedProcess.WaitForExit($remaining)' +
+                    $lineEnding +
+                    '                ' + $extraRoundedCall.TrimStart()
+            )
+        },
+        [pscustomobject]@{
+            Label = '[timeout/millisecond-receiver-alias-mutation]'
+            Source = $source.Replace(
+                '                [void]$process.WaitForExit($remaining)',
+                '                [void]$process.WaitForExit($remaining)' +
+                    $lineEnding +
+                    '                $waitAlias = $process' + $lineEnding +
+                    '                [void]$waitAlias.WaitForExit(1000)'
+            )
+        },
+        [pscustomobject]@{
+            Label = '[timeout/millisecond-lowercase-alias-mutation]'
+            Source = $source.Replace(
+                '                [void]$process.WaitForExit($remaining)',
+                '                [void]$process.WaitForExit($remaining)' +
+                    $lineEnding +
+                    '                $waitAlias = $process' + $lineEnding +
+                    '                [void]$waitAlias.waitforexit(1000)'
+            )
+        },
+        [pscustomobject]@{
+            Label = '[timeout/millisecond-mixed-case-alias-mutation]'
+            Source = $source.Replace(
+                '                [void]$process.WaitForExit($remaining)',
+                '                [void]$process.WaitForExit($remaining)' +
+                    $lineEnding +
+                    '                $waitAlias = $process' + $lineEnding +
+                    '                [void]$waitAlias.wAiTfOrExIt(1000)'
+            )
+        },
+        [pscustomobject]@{
+            Label = '[timeout/millisecond-dynamic-member-mutation]'
+            Source = $source.Replace(
+                '                [void]$process.WaitForExit($remaining)',
+                '                [void]$process.WaitForExit($remaining)' +
+                    $lineEnding +
+                    '                $waitAlias = $process' + $lineEnding +
+                    "                `$waitMember = 'WaitForExit'" +
+                    $lineEnding +
+                    '                [void]$waitAlias.$waitMember(1000)'
+            )
+        }
+    )
+    foreach ($mutation in $mutations) {
+        if ($mutation.Source -ceq $source -or
+            (Test-PrivateMarkerMillisecondWaitContract `
+                -Source $mutation.Source)) {
+            Add-Failure (
+                "$($mutation.Label) Expected the wait contract to reject " +
+                'rounding, overslice, or decoy drift.'
+            )
+        }
+    }
+}
+
 function Get-WorkflowJobLines {
     param(
         [string]$RelativePath,
@@ -843,6 +1230,8 @@ Assert-FileContains -RelativePath 'scripts/private-marker-process.ps1' -Pattern 
 Assert-FileContains -RelativePath 'scripts/private-marker-process.ps1' -Pattern '\^isolated-worktree-pr-flow-git-\[0-9a-f\]\{32\}\$' -Description 'exact Git isolation-root prefix and GUID contract'
 Assert-FileContains -RelativePath 'scripts/private-marker-process.ps1' -Pattern 'FileAttributes\]::ReparsePoint' -Description 'Git isolation-root reparse-point rejection'
 Assert-FileContains -RelativePath 'scripts/private-marker-process.ps1' -Pattern '\.isolated-worktree-pr-flow-owner' -Description 'Git isolation-root owner marker'
+Assert-PrivateMarkerMillisecondWaitContract `
+    -RelativePath 'scripts/private-marker-process.ps1'
 Assert-FilePatternCount `
     -RelativePath 'scripts/private-marker-process.ps1' `
     -Pattern '(?m)^\s*Assert-PrivateMarkerGitIsolationRootState\b' `
@@ -861,6 +1250,7 @@ Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Patte
 Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'reparse-point Git isolation root' -Description 'reparse-point Git isolation-root cleanup rejection'
 Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'BeforeFinalValidation' -Description 'deterministic Git isolation-root check/use interleaving seam'
 Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'regular-directory replacement' -Description 'regular-directory ownership replacement regression'
+Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern '\[timeout/millisecond-poll-boundary\]' -Description 'millisecond poll boundary regression'
 Assert-FirstTopLevelProcessInvocationIsBinary `
     -RelativePath 'scripts/test-scan-private-markers.ps1'
 Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Pattern 'scan-diagnostic-output-limit' -Description 'finding output amplification regression coverage'

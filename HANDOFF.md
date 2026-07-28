@@ -16,6 +16,34 @@
   は Windows、Ubuntu 24.04、native macOS 15 の全 job・全 step が成功。
 - open PR / issueは今回のtask選定時点で0件。
 
+## Current hardening (Class M)
+
+- 目的: Windows native childの100ms監視sliceを維持しながら、operation deadlineの
+  残りが100ms未満なら最後のwaitを残予算まで縮める。0ms以下なら待機せずtimeout判定へ
+  進み、整数秒への丸めやdeadline超過を許さない。
+- 影響: scannerの走査対象、既定timeout、stream監視、tree cleanup、diagnostic label、
+  Windows / Ubuntu / macOSのCI構成は変更しない。変更対象はbounded process helper、
+  静的contract、hostile mutation、境界テストに限定する。
+- source contract:
+  - `PrivateMarker.ContainedProcess`をコンパイルする実`Add-Type -TypeDefinition` sourceは
+    1件だけとし、その中の`WaitForExit(int milliseconds)`は受け取った値を
+    `WaitForSingleObject`へ直接渡す。
+  - operation loopは`min(100, timeout - elapsed)`をmillisecond整数で求め、0以下なら
+    native / managed waitを呼ばない。`$containedProcess.WaitForExit`はloop内に1件だけ、
+    引数は直前に算出した`$remaining`だけとする。
+  - block comment、quoted string、実`Add-Type`外のC# method、正しいcall後の追加rounded
+    call、大小文字を変えたreceiver alias経由の追加wait、dynamic memberをcontract証拠として
+    数えない。
+- test plan:
+  - production変更前のREDとして、readinessが現行literal `100` callerを拒否することを
+    確認する。
+  - hostile mutationでcaller/helper/C# wrapperの秒丸め、full-region comment / string
+    decoy、実`Add-Type`外のmethod decoy、追加rounded call、receiver aliasの大小文字、
+    dynamic member、100ms超過を拒否する。
+  - pure helper境界は残り37ms→37、100ms→100、101ms→100、0ms以下→0を固定する。
+  - scanner full regressionでは既存timeout / containment / tree / streams / diagnostic
+    labelを維持し、Windows PowerShell 5.1とPowerShell 7を直列実行する。
+
 ## Latest maintenance change (Class M)
 
 - 目的: 3 OSのCI checkout pinを公式latest v7.0.1へ更新し、不要なcredential
