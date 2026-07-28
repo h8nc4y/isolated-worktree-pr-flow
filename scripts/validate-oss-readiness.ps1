@@ -559,8 +559,19 @@ function Assert-WorkflowJobShape {
     $usesKeyCount = @(
         $Lines | Where-Object { $_ -match '^        uses:[ \t]*' }
     ).Count
+    $withKeyCount = @(
+        $Lines | Where-Object { $_ -match '^        with:[ \t]*(?:#.*)?$' }
+    ).Count
+    $nestedPropertyCount = @(
+        $Lines | Where-Object { $_ -match '^          (?![ #\r\n]).+$' }
+    ).Count
+    $persistCredentialsFalseCount = @(
+        $Lines | Where-Object {
+            $_ -match '^          persist-credentials:[ \t]*false[ \t]*(?:#.*)?$'
+        }
+    ).Count
     $expectedStepPropertyCount =
-        1 + $ExpectedShellCount + $ExpectedRunCount
+        2 + $ExpectedShellCount + $ExpectedRunCount
 
     if ($jobEntryCount -ne 4 -or
         $nameKeyCount -ne 1 -or
@@ -573,8 +584,11 @@ function Assert-WorkflowJobShape {
     if ($stepPropertyCount -ne $expectedStepPropertyCount -or
         $shellKeyCount -ne $ExpectedShellCount -or
         $runKeyCount -ne $ExpectedRunCount -or
-        $usesKeyCount -ne 1) {
-        Add-Failure "Workflow job '$JobName' contains an unexpected, missing, or duplicate step-level key."
+        $usesKeyCount -ne 1 -or
+        $withKeyCount -ne 1 -or
+        $nestedPropertyCount -ne 1 -or
+        $persistCredentialsFalseCount -ne 1) {
+        Add-Failure "Workflow job '$JobName' contains an unexpected, missing, or duplicate step/nested key."
     }
 }
 
@@ -657,6 +671,69 @@ function Assert-WorkflowUsesStep {
         [System.StringComparison]::Ordinal
     )) {
         Add-Failure "Workflow job '$JobName' step '$Name' must use '$Uses' (found '$($step.Uses)')."
+    }
+}
+
+function Assert-WorkflowCheckoutStep {
+    param(
+        [string[]]$Lines,
+        [string]$JobName,
+        [string]$Uses
+    )
+
+    # `with`の存在だけでは別step配下へのmisnestを見逃す。checkout stepのactive
+    # blockを切り出し、uses・親mapping・credential policyの順序と所属を固定する。
+    $stepStarts = New-Object System.Collections.Generic.List[int]
+    for ($index = 0; $index -lt $Lines.Count; $index++) {
+        if ($Lines[$index] -match '^      -[ \t]+name:[ \t]*Check out repository[ \t]*$') {
+            $stepStarts.Add($index) | Out-Null
+        }
+    }
+    if ($stepStarts.Count -ne 1) {
+        Add-Failure "Workflow job '$JobName' must contain exactly one checkout step block (found $($stepStarts.Count))."
+        return
+    }
+
+    $startIndex = $stepStarts[0]
+    $endIndex = $Lines.Count
+    for ($index = $startIndex + 1; $index -lt $Lines.Count; $index++) {
+        if ($Lines[$index] -match '^      -[ \t]+') {
+            $endIndex = $index
+            break
+        }
+    }
+
+    # blank/commentだけは説明用に許し、それ以外の未知keyや重複はexact比較で拒否する。
+    $activeLines = New-Object System.Collections.Generic.List[string]
+    for ($index = $startIndex; $index -lt $endIndex; $index++) {
+        $line = $Lines[$index]
+        if ($line -match '^[ \t]*(?:#.*)?$') {
+            continue
+        }
+        $activeLines.Add($line) | Out-Null
+    }
+
+    $expectedLines = @(
+        '      - name: Check out repository',
+        "        uses: $Uses # v7.0.1",
+        '        with:',
+        '          persist-credentials: false'
+    )
+    $matchesExpected = $activeLines.Count -eq $expectedLines.Count
+    if ($matchesExpected) {
+        for ($index = 0; $index -lt $expectedLines.Count; $index++) {
+            if (-not [string]::Equals(
+                $activeLines[$index],
+                $expectedLines[$index],
+                [System.StringComparison]::Ordinal
+            )) {
+                $matchesExpected = $false
+                break
+            }
+        }
+    }
+    if (-not $matchesExpected) {
+        Add-Failure "Workflow job '$JobName' checkout step must use the exact reviewed revision with persist-credentials false."
     }
 }
 
@@ -791,7 +868,8 @@ Assert-FileContains -RelativePath 'scripts/test-scan-private-markers.ps1' -Patte
 # job blockを先に切り出し、timeout/runs-on/checkout/stepを所有job内だけで
 # 検証する。後続jobへ跨ぐregexによる誤合格を許さない。
 $workflowPath = '.github/workflows/validate.yml'
-$checkoutRevision = 'actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09'
+# tag driftを避け、公式v7.0.1のreviewed commitを3 job共通のexact pinにする。
+$checkoutRevision = 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'
 Assert-WorkflowDocumentShape `
     -RelativePath $workflowPath `
     -ExpectedJobNames @('validate', 'validate-ubuntu', 'validate-macos')
@@ -815,6 +893,8 @@ Assert-WorkflowJobShape -Lines $windowsJobLines -JobName $windowsJobName `
     -ExpectedStepCount 8 -ExpectedShellCount 7 -ExpectedRunCount 7
 Assert-WorkflowUsesStep -Steps $windowsSteps -JobName $windowsJobName `
     -Name 'Check out repository' -Uses $checkoutRevision
+Assert-WorkflowCheckoutStep -Lines $windowsJobLines -JobName $windowsJobName `
+    -Uses $checkoutRevision
 Assert-WorkflowStep -Steps $windowsSteps -JobName $windowsJobName `
     -Name 'Validate OSS readiness' -Shell 'pwsh' `
     -Run './scripts/validate-oss-readiness.ps1'
@@ -856,6 +936,8 @@ Assert-WorkflowJobShape -Lines $ubuntuJobLines -JobName $ubuntuJobName `
     -ExpectedStepCount 6 -ExpectedShellCount 5 -ExpectedRunCount 5
 Assert-WorkflowUsesStep -Steps $ubuntuSteps -JobName $ubuntuJobName `
     -Name 'Check out repository' -Uses $checkoutRevision
+Assert-WorkflowCheckoutStep -Lines $ubuntuJobLines -JobName $ubuntuJobName `
+    -Uses $checkoutRevision
 Assert-WorkflowStep -Steps $ubuntuSteps -JobName $ubuntuJobName `
     -Name 'Validate OSS readiness on Ubuntu' -Shell 'pwsh' `
     -Run './scripts/validate-oss-readiness.ps1'
@@ -891,6 +973,8 @@ Assert-WorkflowJobShape -Lines $macosJobLines -JobName $macosJobName `
     -ExpectedStepCount 6 -ExpectedShellCount 5 -ExpectedRunCount 5
 Assert-WorkflowUsesStep -Steps $macosSteps -JobName $macosJobName `
     -Name 'Check out repository' -Uses $checkoutRevision
+Assert-WorkflowCheckoutStep -Lines $macosJobLines -JobName $macosJobName `
+    -Uses $checkoutRevision
 Assert-WorkflowStep -Steps $macosSteps -JobName $macosJobName `
     -Name 'Validate OSS readiness on macOS' -Shell 'pwsh' `
     -Run './scripts/validate-oss-readiness.ps1'

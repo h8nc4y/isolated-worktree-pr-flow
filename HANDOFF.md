@@ -1,16 +1,37 @@
 # HANDOFF
 
-更新日: 2026-07-27 (JST)
+更新日: 2026-07-28 (JST)
 
 ## Current state
 
-- 最新の機能変更は [PR #9](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/9) で `main` へ squash merge 済み。
-- merge commit `38129ac068ace39109caa12e20d70fcaa0d9ec54` の
+- このhandoffと同じtreeでは、Windows、Ubuntu 24.04、native macOS 15の
+  3 jobすべてが`actions/checkout` v7.0.1のimmutable commit
+  `3d3c42e5aac5ba805825da76410c181273ba90b1`を使用する。
+- exact workflow validatorも同じrevisionを要求し、job単位の欠落・重複・
+  別revisionに加え、`persist-credentials: false`の欠落・misnest・
+  余分なcheckout設定をfail closedで拒否する。
+- 直前の機能変更 [PR #9](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/9)
+  のmerge commit `38129ac068ace39109caa12e20d70fcaa0d9ec54` に対する
   [post-main run 30237184620](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30237184620)
   は Windows、Ubuntu 24.04、native macOS 15 の全 job・全 step が成功。
-- open PR / 必須の既知修正: この handoff 作成時点ではなし。
+- open PR / issueは今回のtask選定時点で0件。
 
-## Latest delivered work (Class M)
+## Latest maintenance change (Class M)
+
+- 目的: 3 OSのCI checkout pinを公式latest v7.0.1へ更新し、不要なcredential
+  永続化とvalidatorとのrevision driftを防ぐ。
+- 影響: workflow trigger、permissions、runner、timeout、validation stepは
+  変更せず、checkout actionをv5からv7.0.1へ更新して
+  `persist-credentials: false`を固定する。両versionともaction runtimeは
+  Node.js 24。
+- 検証: workflowだけを先に更新したREDでは旧v5 revisionを要求するvalidatorが
+  3 jobすべてを拒否。credential policy追加時の第二REDでは未許可のnested keyを
+  3 jobすべてで拒否。`true`、misnested `with`、余分なcheckout inputのmutationも
+  各対象jobで拒否した。exact block同期後、PowerShell 7 / 5.1のreadiness、
+  cleanup guards各16 assertions、repository private-marker scan、Gitleaks、
+  Semgrep、whitespaceがlocalで成功。
+
+## Previous delivered work (Class M)
 
 - 目的: private-marker scanner が所有する Git isolation root の再帰削除を、
   OS temp 直下の exact-prefix + GUID 名を持つ通常directoryだけに限定する。
@@ -48,6 +69,8 @@
   NUL、invalid UTF-8、先頭BOM、Unicode format文字、非空prefixは拒否する。
 - 同一host上のscanner self-testは直列実行する。並列runは互いのtemp isolation
   rootを検知して意図どおりfail closedする。
+- checkout tag名をworkflowへ直接指定せず、公式release tagが指すreviewed
+  commit SHAとcredential非永続化をvalidatorと3 jobで共有する。
 - scanner所有のisolation rootは、OS temp直下のexact-prefix + GUID名に加え、
   run固有owner markerを持つ通常directoryだけを削除対象にする。初回検証後も
   削除直前にrootとowner markerを再取得し、差替えを検知したらfail closedする。
@@ -63,6 +86,8 @@
 ## Known boundaries
 
 - macOSの証拠はGitHub-hosted `macos-15` runner上のCI契約に限定される。owner一般実機は未確認。
+- v7.0.1の実行互換性はGitHub-hosted PR / main CIで確認する。local readinessは
+  YAMLと文書契約を検証するが、action自体はlocal実行しない。
 - deploy、release、credential、OAuth、real data、paid service操作は実施していない。
 
 ## Next step

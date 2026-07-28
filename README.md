@@ -327,8 +327,12 @@ The GitHub Actions workflow is configured to run the readiness validator,
 cleanup guards, scanner self-test, repository scan, and committed-tree
 whitespace check on pull requests and pushes to `main`. Windows covers
 PowerShell 7 and Windows PowerShell 5.1; Ubuntu 24.04 and native macOS 15 are
-covered by PowerShell 7. The first full native macOS job passed its readiness,
-cleanup, scanner self-test, repository scan, and whitespace steps in
+covered by PowerShell 7. Every job pins `actions/checkout` to the reviewed
+`v7.0.1` commit `3d3c42e5aac5ba805825da76410c181273ba90b1`, and the readiness
+validator requires `persist-credentials: false` in the same checkout step.
+A missing, extra, misnested, or different checkout revision or credential
+policy fails validation in any job. The first full native macOS job passed
+its readiness, cleanup, scanner self-test, repository scan, and whitespace steps in
 [PR #7 run 30216166105](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30216166105).
 
 For the latest verified maintenance state, decisions, boundaries, and next
