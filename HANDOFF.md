@@ -4,9 +4,19 @@
 
 ## Current state
 
-- `fix/guard-remote-branch-delete` で、merge後のremote branch削除を
-  `headRefOid` のexact expected-value leaseへ変更中。commit / push / PR /
-  mergeは未実施。
+- [PR #14](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/14) で、
+  merge後のremote branch削除を `headRefOid` のexact expected-value leaseへ
+  変更した。feature commitは
+  `6ace3004a4bc3c442ec95454ad42f30f27c77806`、merge commitは
+  `42e1811f3a0ae0c9f872bcda73a17a29a004e4fe`で、両treeは一致する。
+- PR #14のremote cleanupでは、merge前に保持したOIDとexact remote 1 recordの
+  一致を再確認し、GitHubへexpected-value leaseを適用して削除成功、再照会exit 2を
+  確認した。実GitHubで観測後に別actorをdriftさせる拒否経路は未確認。
+- merge後の [post-main run 30398172444](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30398172444)
+  はWindows、Ubuntu 24.04、native macOS 15の全job・全stepが成功した。
+- 同じmerge treeのlocal post-main再検証では、cleanup guardsがPowerShell 7 /
+  Windows PowerShell 5.1で各23 assertions、readinessが両host、private-markerと
+  Gitleaksが成功した。Semgrep固定ruleの対象source変更は無い。
 - [PR #12](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/12) で
   bounded processの最後のpoll waitを残予算内へ制限した。merge commitは
   `5a38ea72f8378510fddf0f8701d74b73f6ee2965`、merge treeとfeature treeは
@@ -32,8 +42,8 @@
 - 初回REDでは従来のplain deleteがdrift後のRを削除してexit 0となった。exact lease
   へ変更後、PowerShell 7 / Windows PowerShell 5.1のcleanup guardsは各23
   assertions、readinessは両hostで成功した。
-- 実GitHub remoteのbranch削除、OAuth、credential、real data、paid service、
-  deployは実施していない。
+- 実GitHub remoteのexact-head branch削除はPR #14で成功した。実GitHubのdrift
+  競合、OAuth、credential、real data、paid service、deployは実施していない。
 
 ## Previous hardening (Class M)
 
@@ -141,5 +151,5 @@
 
 ## Next step
 
-scanner実行枠のgrant後にprivate-marker / Gitleaks / Semgrepを含むfinal gateを通し、
-focused commit、PR、CI、merge、post-main確認、cleanupへ進む。
+新しいissue、PR feedback、CI failureがなければ、exact expected-OID契約を維持し
+つつ、次の最高価値の小さな改善を選ぶ。
