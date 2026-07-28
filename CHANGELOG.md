@@ -19,6 +19,11 @@ The format loosely follows Keep a Changelog conventions.
 
 ### Changed
 
+- Updated all three GitHub Actions checkout steps from the reviewed `v5`
+  commit to the immutable `v7.0.1` commit
+  `3d3c42e5aac5ba805825da76410c181273ba90b1`. The exact workflow validator
+  requires the same revision and `persist-credentials: false` in every job;
+  checkout continues to use the Node.js 24 action runtime.
 - Made the rebase cleanup fixture fail directly when the landed commit does
   not differ from the original PR head, so guard 2b's rewritten-history
   premise cannot pass only through indirect topology assertions.
