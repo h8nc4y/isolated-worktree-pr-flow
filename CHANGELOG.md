@@ -27,6 +27,10 @@ The format loosely follows Keep a Changelog conventions.
   `--force-with-lease` for every merge mode, using the PR head retained
   immediately before merge. An already absent branch is skipped, while any
   post-merge remote drift is rejected atomically.
+- Recorded a live GitHub exact-head cleanup from PR #14: the retained
+  pre-merge OID matched the sole remote record, the explicit lease deleted
+  that ref, and a second exact-ref query confirmed it absent. Live drift
+  rejection remains bounded to the disposable bare-origin regression.
 - Kept the Windows native-child poll cadence at 100 milliseconds while
   shrinking the final wait to the exact remaining operation budget. The
   readiness contract now binds the actual `Add-Type` source, direct Win32

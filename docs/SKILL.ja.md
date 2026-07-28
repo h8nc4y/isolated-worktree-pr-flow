@@ -294,7 +294,10 @@ PowerShell 7 job を含みます。3 job は
    background fetchで観測が動くため使わない。exact leaseならremote refがPR head
    から変わった時点でserverが削除をatomicに拒否する。
    exact-head削除とpost-merge drift拒否は、local bare remoteとsyntheticなsecond
-   actorで回帰検証する。同じleaseの実GitHub remote経路は未確認。
+   actorで回帰検証する。実GitHubのexact-head削除は2026-07-29の
+   [PR #14](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/14)で実測し、
+   merge前OIDとremoteのexact 1 record一致、expected-value lease成功、再照会exit 2
+   を確認した。実GitHubで観測後にdriftさせる競合拒否経路は未確認。
 
 チェックが全て通ってから実行する:
 

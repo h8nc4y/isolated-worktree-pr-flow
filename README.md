@@ -196,9 +196,14 @@ worktree を切って PR を作るための手順です。
 
 ## Limitations
 
-- Exact expected-OID deletion and remote-drift rejection are verified only
-  against a disposable local bare remote. The live GitHub remote path is not
-  checked.
+- Exact expected-OID deletion against the live GitHub remote was measured on
+  2026-07-29 with
+  [PR #14](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/14):
+  the retained pre-merge `headRefOid` matched the sole remote record, the
+  explicit expected-value lease deleted that exact ref, and a second
+  `ls-remote --exit-code` returned exit 2. Live post-observation drift
+  rejection is not checked; atomic rejection and exact second-actor tip
+  preservation are verified against a disposable local bare remote.
 - The squash/rebase cleanup guard (2b) has disposable synthetic-Git coverage
   for its topology and rejection paths. Its live GitHub squash path was
   measured on 2026-07-23 with

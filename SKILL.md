@@ -332,8 +332,13 @@ passed, re-run the checks immediately before executing (field-tested).
    move that local observation. The exact lease makes the server reject the
    deletion atomically if the remote ref no longer equals the merged PR head.
    Exact-head deletion and post-merge drift rejection are regression-tested
-   with a disposable local bare remote and a second synthetic actor. The same
-   lease against a live GitHub remote is not yet verified.
+   with a disposable local bare remote and a second synthetic actor. A live
+   GitHub exact-head deletion was measured on 2026-07-29 with
+   [PR #14](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/14):
+   the retained pre-merge OID matched the sole remote record, the server
+   accepted the explicit expected-value lease, and a second `ls-remote`
+   returned exit 2. The live post-observation drift rejection path is not yet
+   verified.
 
 Only after all checks pass:
 

@@ -71,7 +71,11 @@ the remote ref after `ls-remote`, deletion is rejected and its commit remains.
 Do not shorten this to implicit `--force-with-lease`: a background fetch can
 move the remote-tracking ref on which that form relies.
 The exact-head and drift paths are covered with a disposable local bare
-remote; the live GitHub remote path is not yet verified.
+remote. Live GitHub exact-head deletion was measured on 2026-07-29 with
+[PR #14](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/14):
+the retained pre-merge OID matched the sole remote record, the explicit lease
+was accepted, and a second `ls-remote` returned exit 2. Live
+post-observation drift rejection is not yet verified.
 
 The local topology and rejection paths are regression-tested with disposable
 synthetic Git histories isolated from machine/user Git configuration, hooks,
