@@ -302,6 +302,25 @@ $preexistingScannerIsolationRoots = @(
 )
 
 try {
+    # host clockを精度oracleにせず、pure helperへ合成elapsed値を渡して
+    # 100ms slice・最終残予算・期限到達の境界を決定論的に固定する。
+    $pollBoundaryCases = @(
+        @{ Elapsed = 963L; Timeout = 1000; Expected = 37 },
+        @{ Elapsed = 900L; Timeout = 1000; Expected = 100 },
+        @{ Elapsed = 899L; Timeout = 1000; Expected = 100 },
+        @{ Elapsed = 1000L; Timeout = 1000; Expected = 0 },
+        @{ Elapsed = 1001L; Timeout = 1000; Expected = 0 }
+    )
+    foreach ($pollBoundaryCase in $pollBoundaryCases) {
+        $actualPollWait = Get-PrivateMarkerPollWaitMilliseconds `
+            -ElapsedMilliseconds $pollBoundaryCase.Elapsed `
+            -TimeoutMilliseconds $pollBoundaryCase.Timeout
+        if ($actualPollWait -ne $pollBoundaryCase.Expected) {
+            Add-Failure '[timeout/millisecond-poll-boundary] Expected exact 100ms-or-remaining poll wait.'
+            break
+        }
+    }
+
     # scanner自身のrecursive cleanupは、OS temp直下の専用GUID directoryだけを
     # 所有物として扱う。広いtemp root、wrong-name、nested pathは削除候補にしない。
     $cleanupTemporaryParent = [System.IO.Path]::GetTempPath()

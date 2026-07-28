@@ -1143,6 +1143,22 @@ function Wait-PrivateMarkerReadTask {
     }
 }
 
+function Get-PrivateMarkerPollWaitMilliseconds {
+    param(
+        [Parameter(Mandatory = $true)]
+        [long]$ElapsedMilliseconds,
+
+        [Parameter(Mandatory = $true)]
+        [int]$TimeoutMilliseconds
+    )
+
+    $remaining = [long]$TimeoutMilliseconds - $ElapsedMilliseconds
+    if ($remaining -le 0) {
+        return 0
+    }
+    return [int][Math]::Min(100L, $remaining)
+}
+
 function Invoke-PrivateMarkerProcess {
     param(
         [Parameter(Mandatory = $true)]
@@ -1523,10 +1539,17 @@ catch {
                 )
                 break
             }
+            # stream状態を100msごとに再確認しつつ、最終sliceは残予算を越えない。
+            $remaining = Get-PrivateMarkerPollWaitMilliseconds `
+                -ElapsedMilliseconds $clock.ElapsedMilliseconds `
+                -TimeoutMilliseconds $TimeoutMilliseconds
+            if ($remaining -le 0) {
+                break
+            }
             if ($null -ne $containedProcess) {
-                [void]$containedProcess.WaitForExit(100)
+                [void]$containedProcess.WaitForExit($remaining)
             } else {
-                [void]$process.WaitForExit(100)
+                [void]$process.WaitForExit($remaining)
             }
             $processHasExited = if ($null -ne $containedProcess) {
                 $containedProcess.HasExited

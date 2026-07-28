@@ -19,6 +19,13 @@ The format loosely follows Keep a Changelog conventions.
 
 ### Changed
 
+- Kept the Windows native-child poll cadence at 100 milliseconds while
+  shrinking the final wait to the exact remaining operation budget. The
+  readiness contract now binds the actual `Add-Type` source, direct Win32
+  millisecond wrapper, pure poll helper, and unique native/managed wait calls;
+  in-memory hostile mutations reject second rounding, oversize slices,
+  comment/string decoys, extra waits, case-variant receiver aliases, and
+  dynamic-member bypasses.
 - Updated all three GitHub Actions checkout steps from the reviewed `v5`
   commit to the immutable `v7.0.1` commit
   `3d3c42e5aac5ba805825da76410c181273ba90b1`. The exact workflow validator
