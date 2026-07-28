@@ -9,6 +9,13 @@ merge mode BEFORE merging, so you know which guard applies at cleanup time.
 | `--squash` | No — a new single commit is created | 2b: MERGED + `mergeCommit` is-ancestor + `headRefOid` match | `-D` (guard replaces `-d`) |
 | `--rebase` | No — commits are recreated with new hashes | 2b (same as squash) | `-D` (guard replaces `-d`) |
 
+All three modes use the same exact-OID lease for remote branch deletion.
+Immediately before merging in any mode, retain the PR head:
+
+```bash
+gh pr view <pr-number> --repo <owner>/<name> --json headRefOid -q .headRefOid
+```
+
 ## Guard 2a — after `gh pr merge --merge`
 
 ```bash
@@ -30,7 +37,7 @@ the `--is-ancestor` check above exited 0 — never without it.
 ## Guard 2b — after `gh pr merge --squash` or `--rebase`
 
 ```bash
-gh pr view <pr-number> --repo <owner>/<name> --json state,mergeCommit,headRefOid
+gh pr view <pr-number> --repo <owner>/<name> --json state,mergeCommit
 # require: state == MERGED
 
 # (i) the squash/rebase result landed on the default branch
@@ -43,6 +50,28 @@ git -C <repo> rev-parse fix/<task>    # require: equals headRefOid
 # both hold → delete with explicit -D (the guard substitutes for -d)
 git -C <repo> branch -D fix/<task>
 ```
+
+## Remote branch deletion — all merge modes
+
+Use the `headRefOid` retained immediately before merge; do not re-read a head
+branch that may have moved afterward. Check the exact remote ref first:
+`git -C <repo> ls-remote --exit-code --heads origin
+refs/heads/fix/<task>`. Exit 2 means it is already absent, so skip deletion.
+Exit 0 must contain exactly one record at `headRefOid`; anything else fails
+closed.
+
+When it matches, delete with an explicit expected-value lease:
+
+```bash
+git -C <repo> push --force-with-lease=refs/heads/fix/<task>:<headRefOid> origin :refs/heads/fix/<task>
+```
+
+The server checks the expected OID atomically. If another session advances
+the remote ref after `ls-remote`, deletion is rejected and its commit remains.
+Do not shorten this to implicit `--force-with-lease`: a background fetch can
+move the remote-tracking ref on which that form relies.
+The exact-head and drift paths are covered with a disposable local bare
+remote; the live GitHub remote path is not yet verified.
 
 The local topology and rejection paths are regression-tested with disposable
 synthetic Git histories isolated from machine/user Git configuration, hooks,

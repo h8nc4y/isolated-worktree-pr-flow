@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 Set-StrictMode -Version Latest
@@ -460,6 +460,95 @@ try {
     $rebaseLocalTip = (Invoke-Git -Repository $rebaseRepository -Arguments @('rev-parse', 'fix/rebase')).Output
     Assert-Equal -Actual $rebaseLocalTip -Expected $rebaseHeadRefOid `
         -Message 'Guard 2b must accept the unchanged original PR head after rebase merge'
+
+    # remote branch削除は、別sessionがPR merge後にrefを前進させても
+    # そのcommitを消さないことをdisposable bare originで固定する。
+    $remoteOriginRepository = Join-Path $testRoot 'remote-origin.git'
+    New-Item -ItemType Directory -Path $remoteOriginRepository | Out-Null
+    Invoke-Git -Repository $remoteOriginRepository -Arguments @('init', '--bare', '-b', 'main') | Out-Null
+
+    $remoteOwnerRepository = Join-Path $testRoot 'remote-owner'
+    Initialize-FixtureRepository -Path $remoteOwnerRepository
+    Invoke-Git -Repository $remoteOwnerRepository `
+        -Arguments @('remote', 'add', 'origin', $remoteOriginRepository) | Out-Null
+    Invoke-Git -Repository $remoteOwnerRepository -Arguments @('push', '-u', 'origin', 'main') | Out-Null
+    Invoke-Git -Repository $remoteOwnerRepository -Arguments @('switch', '-c', 'fix/remote-delete') | Out-Null
+    Add-Commit -Repository $remoteOwnerRepository -RelativePath 'remote.txt' `
+        -Content "expected`n" -Message 'remote delete expected head'
+    $remoteExpectedHeadOid = (Invoke-Git -Repository $remoteOwnerRepository `
+        -Arguments @('rev-parse', 'fix/remote-delete')).Output
+    Invoke-Git -Repository $remoteOwnerRepository -Arguments @(
+        'push',
+        'origin',
+        'fix/remote-delete:refs/heads/fix/lease-positive',
+        'fix/remote-delete:refs/heads/fix/lease-drift'
+    ) | Out-Null
+
+    # expected Hのままなら削除できるpositive pathを先に固定する。
+    $positiveRemoteDelete = Invoke-Git -Repository $remoteOwnerRepository `
+        -Arguments @(
+            'push',
+            "--force-with-lease=refs/heads/fix/lease-positive:$remoteExpectedHeadOid",
+            'origin',
+            ':refs/heads/fix/lease-positive'
+        ) `
+        -AllowedExitCodes @(0, 1)
+    Assert-ExitCode -Result $positiveRemoteDelete -Expected 0 `
+        -Message 'Remote cleanup must delete a branch that still equals the expected PR head'
+    $positiveRemoteAfterDelete = Invoke-Git -Repository $remoteOwnerRepository `
+        -Arguments @('ls-remote', '--exit-code', '--heads', 'origin', 'refs/heads/fix/lease-positive') `
+        -AllowedExitCodes @(0, 2)
+    Assert-ExitCode -Result $positiveRemoteAfterDelete -Expected 2 `
+        -Message 'The exact expected remote branch must be absent after guarded deletion'
+
+    # second actorだけをRへ進め、owner側のlocal Hは意図的に不変に保つ。
+    $remoteActorRepository = Join-Path $testRoot 'remote-actor'
+    Invoke-Git -Repository $testRoot `
+        -Arguments @('clone', $remoteOriginRepository, $remoteActorRepository) | Out-Null
+    Invoke-Git -Repository $remoteActorRepository `
+        -Arguments @('config', 'user.name', 'Remote Drift Actor') | Out-Null
+    $remoteActorEmail = 'remote-drift-actor' + '@' + 'example.invalid'
+    Invoke-Git -Repository $remoteActorRepository `
+        -Arguments @('config', 'user.email', $remoteActorEmail) | Out-Null
+    Invoke-Git -Repository $remoteActorRepository -Arguments @(
+        'switch',
+        '-c',
+        'actor/remote-delete',
+        '--track',
+        'origin/fix/lease-drift'
+    ) | Out-Null
+    Add-Commit -Repository $remoteActorRepository -RelativePath 'remote-actor.txt' `
+        -Content "advanced`n" -Message 'advance remote branch'
+    $remoteAdvancedOid = (Invoke-Git -Repository $remoteActorRepository `
+        -Arguments @('rev-parse', 'HEAD')).Output
+    Invoke-Git -Repository $remoteActorRepository `
+        -Arguments @('push', 'origin', 'HEAD:refs/heads/fix/lease-drift') | Out-Null
+    Assert-NotEqual -Actual $remoteAdvancedOid -Expected $remoteExpectedHeadOid `
+        -Message 'The second actor must advance the remote branch beyond the expected PR head'
+    $remoteOwnerTip = (Invoke-Git -Repository $remoteOwnerRepository `
+        -Arguments @('rev-parse', 'fix/remote-delete')).Output
+    Assert-Equal -Actual $remoteOwnerTip -Expected $remoteExpectedHeadOid `
+        -Message 'The owner local branch must remain equal to the merged PR head'
+
+    # expected Hを明示したleaseにより、check後の競合もserver側でatomicに拒否する。
+    $driftedRemoteDelete = Invoke-Git -Repository $remoteOwnerRepository `
+        -Arguments @(
+            'push',
+            "--force-with-lease=refs/heads/fix/lease-drift:$remoteExpectedHeadOid",
+            'origin',
+            ':refs/heads/fix/lease-drift'
+        ) `
+        -AllowedExitCodes @(0, 1)
+    Assert-ExitCode -Result $driftedRemoteDelete -Expected 1 `
+        -Message 'Remote cleanup must reject a branch advanced by another actor'
+    $driftedRemoteAfterDelete = Invoke-Git -Repository $remoteOwnerRepository `
+        -Arguments @('ls-remote', '--exit-code', '--heads', 'origin', 'refs/heads/fix/lease-drift') `
+        -AllowedExitCodes @(0, 2)
+    Assert-ExitCode -Result $driftedRemoteAfterDelete -Expected 0 `
+        -Message 'Rejected cleanup must preserve the advanced remote branch'
+    Assert-Equal -Actual $driftedRemoteAfterDelete.Output `
+        -Expected "$remoteAdvancedOid`trefs/heads/fix/lease-drift" `
+        -Message 'Rejected cleanup must preserve the exact second-actor remote tip'
 
     Write-Host "Cleanup guard regression test passed ($assertionCount assertions)."
 }

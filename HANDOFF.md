@@ -4,6 +4,9 @@
 
 ## Current state
 
+- `fix/guard-remote-branch-delete` で、merge後のremote branch削除を
+  `headRefOid` のexact expected-value leaseへ変更中。commit / push / PR /
+  mergeは未実施。
 - [PR #12](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/12) で
   bounded processの最後のpoll waitを残予算内へ制限した。merge commitは
   `5a38ea72f8378510fddf0f8701d74b73f6ee2965`、merge treeとfeature treeは
@@ -18,6 +21,21 @@
   余分なcheckout設定をfail closedで拒否する。
 
 ## Current hardening (Class M)
+
+- 両merge方式でmerge直前の `headRefOid` を保持し、remote refが既に無ければ
+  削除をskipする。
+  refが残る場合はexact OIDを観測したうえで
+  `--force-with-lease=<ref>:<headRefOid>` とempty sourceを組み合わせ、別sessionの
+  post-merge pushをserver側でatomicに削除拒否する。
+- local bare originとsecond actorを使うfixtureを追加。expected Hの削除は成功し、
+  H→Rへremoteだけを進めた場合は削除が失敗してRが残ることを確認する。
+- 初回REDでは従来のplain deleteがdrift後のRを削除してexit 0となった。exact lease
+  へ変更後、PowerShell 7 / Windows PowerShell 5.1のcleanup guardsは各23
+  assertions、readinessは両hostで成功した。
+- 実GitHub remoteのbranch削除、OAuth、credential、real data、paid service、
+  deployは実施していない。
+
+## Previous hardening (Class M)
 
 - Windows native childの100ms監視sliceを維持し、operation deadlineの残りが100ms未満なら
   最後のwaitを残予算まで縮める。0ms以下ではnative / managed waitを呼ばずtimeout判定へ
@@ -77,11 +95,14 @@
   whitespace checkが各runnerで成功する。
 - private-marker scannerはindex/worktree両方を検査し、process・byte・record・deadline
   境界でfail closedする。
+- remote branch cleanupはmerge直前のPR headだけを削除でき、既存のabsent refはskip、
+  post-merge driftはそのexact remote tipを保持したままfail closedする。
 
 ## Key files
 
 - `.github/workflows/validate.yml`: 3 runnerのCI契約。
 - `scripts/validate-oss-readiness.ps1`: workflow/documentのexact contract。
+- `scripts/test-cleanup-guards.ps1`: merge topologyとremote削除leaseのsynthetic regression。
 - `scripts/private-marker-process.ps1`: bounded child-process境界。
 - `scripts/scan-private-markers.ps1`: public-safe marker scan。
 - `scripts/test-scan-private-markers.ps1`: hostile fixtureを含むfull regression。
@@ -100,6 +121,8 @@
 - scanner所有のisolation rootは、OS temp直下のexact-prefix + GUID名に加え、
   run固有owner markerを持つ通常directoryだけを削除対象にする。初回検証後も
   削除直前にrootとowner markerを再取得し、差替えを検知したらfail closedする。
+- remote削除のexpected OIDはmerge直前の `headRefOid` を保持する。merge後にhead
+  branchを読み直さず、explicit expected-value lease以外の削除を許可しない。
 
 ## Verification commands
 
@@ -118,5 +141,5 @@
 
 ## Next step
 
-新しいissue、PR feedback、CI failureがなければ、公開安全性とcross-platform
-fail-closed契約を維持したまま、次の最高価値の小さな改善を選ぶ。
+scanner実行枠のgrant後にprivate-marker / Gitleaks / Semgrepを含むfinal gateを通し、
+focused commit、PR、CI、merge、post-main確認、cleanupへ進む。

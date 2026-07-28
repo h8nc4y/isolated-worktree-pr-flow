@@ -221,6 +221,7 @@ semantics — have POSIX symlink equivalents noted inline.
      guard instead (safety condition 2b).
 
    ```powershell
+   gh pr view <pr-number> --repo <owner>/<name> --json headRefOid -q .headRefOid   # retain this exact OID before merge
    gh pr merge <pr-number> --repo <owner>/<name> --merge      # squash-policy repos: --squash, then use guard 2b
    gh pr view <pr-number> --repo <owner>/<name> --json state,mergedAt,mergeCommit
    ```
@@ -251,7 +252,10 @@ can drift between when a step was approved and when it runs; if time has
 passed, re-run the checks immediately before executing (field-tested).
 
 1. `gh pr view <pr-number> --repo <owner>/<name> --json state,mergedAt`
-   reports `MERGED`.
+   reports `MERGED`, and the exact non-empty `headRefOid` recorded immediately
+   before merge is still available. If it was not recorded, fail closed
+   instead of re-reading a head branch that may have moved after merge. Both
+   merge modes need that stable OID for condition 6.
 2. Merge-mode-matched unmerged-work verification. Do not mix the modes: after
    a squash, guard 2a never passes even for a correctly merged PR; and
    `branch -d` after a squash either slips through on merged-to-upstream
@@ -270,9 +274,9 @@ passed, re-run the checks immediately before executing (field-tested).
      (field-tested). In that case deleting with `-D` is acceptable only
      immediately after the `--is-ancestor` check exited 0 — the same
      guard-then-`-D` shape as 2b; a `-D` without the guard stays forbidden.
-   - **2b — `--squash` / `--rebase` mode**: fetch `state`, `mergeCommit`, and
-     `headRefOid` via
-     `gh pr view <pr-number> --repo <owner>/<name> --json state,mergeCommit,headRefOid`.
+   - **2b — `--squash` / `--rebase` mode**: fetch `state` and `mergeCommit`
+     via `gh pr view <pr-number> --repo <owner>/<name> --json state,mergeCommit`,
+     and use the `headRefOid` retained before merge.
      Note that `mergeCommit` is a JSON object — the commit hash is its `oid`
      field (`-q .mergeCommit.oid` extracts it); `headRefOid` is a plain
      string. Then confirm both: (i)
@@ -315,6 +319,21 @@ passed, re-run the checks immediately before executing (field-tested).
    platform's recursive deletion follows junctions or symlinks varies by
    tool and version (unverified) — remove the link explicitly instead of
    relying on it.
+6. If `refs/heads/fix/<task>` still exists on `origin`, its deletion is
+   conditional on the exact `headRefOid` validated in condition 1. Inspect the
+   exact ref with
+   `git -C <repo> ls-remote --exit-code --heads origin refs/heads/fix/<task>`:
+   exit 2 means the remote branch is already absent and deletion is skipped;
+   exit 0 must return exactly one record at
+   `<headRefOid>`. Any other result fails closed. Even after that observation,
+   another session can advance the ref, so delete only with the explicit
+   expected-value lease shown below. Never use an implicit
+   `--force-with-lease` based on a remote-tracking ref: background fetches can
+   move that local observation. The exact lease makes the server reject the
+   deletion atomically if the remote ref no longer equals the merged PR head.
+   Exact-head deletion and post-merge drift rejection are regression-tested
+   with a disposable local bare remote and a second synthetic actor. The same
+   lease against a live GitHub remote is not yet verified.
 
 Only after all checks pass:
 
@@ -322,7 +341,7 @@ Only after all checks pass:
 git -C <repo> worktree remove ..\_worktrees\<task>
 git -C <repo> worktree prune
 git -C <repo> branch -d fix/<task>          # 2a (--merge) mode; on a not-fully-merged refusal apply the 2a caveat (verified is-ancestor, then -D); 2b mode uses -D only after its guard
-git -C <repo> push origin --delete fix/<task>   # if the remote branch remains
+git -C <repo> push --force-with-lease=refs/heads/fix/<task>:<headRefOid> origin :refs/heads/fix/<task>   # exact remote ref only; already absent means skip
 git -C <repo> remote prune origin
 ```
 

@@ -1194,6 +1194,7 @@ foreach ($requiredFile in $requiredFiles) {
 foreach ($japaneseCommentedScript in @(
     'scripts/private-marker-process.ps1',
     'scripts/scan-private-markers.ps1',
+    'scripts/test-cleanup-guards.ps1',
     'scripts/test-scan-private-markers.ps1',
     'scripts/validate-oss-readiness.ps1'
 )) {
@@ -1208,6 +1209,8 @@ Assert-FileContains -RelativePath 'README.md' -Pattern 'CONTRIBUTING\.md' -Descr
 Assert-FileContains -RelativePath 'README.md' -Pattern 'SECURITY\.md' -Description 'link to SECURITY.md'
 Assert-FileContains -RelativePath 'README.md' -Pattern 'docs/SKILL\.ja\.md' -Description 'link to the Japanese skill version'
 Assert-FileContains -RelativePath 'README.md' -Pattern 'macOS 15' -Description 'native macOS validation coverage'
+Assert-FileContains -RelativePath 'README.md' -Pattern 'exact expected-OID.*--force-with-lease' -Description 'atomic remote branch deletion summary'
+Assert-FileContains -RelativePath 'README.md' -Pattern '(?s)disposable local bare remote.*live GitHub remote.*not\s+checked' -Description 'local-only remote deletion evidence boundary'
 Assert-FileContains -RelativePath 'SKILL.md' -Pattern 'macOS 15' -Description 'native macOS portability coverage'
 Assert-FileContains -RelativePath 'docs/SKILL.ja.md' -Pattern 'macOS 15' -Description 'Japanese native macOS portability coverage'
 Assert-FileContains -RelativePath 'CONTRIBUTING.md' -Pattern 'macOS 15' -Description 'contributor native macOS validation coverage'
@@ -1215,6 +1218,46 @@ Assert-FileContains -RelativePath '.gitignore' -Pattern '\.private-markers\.loca
 Assert-FileContains -RelativePath 'CONTRIBUTING.md' -Pattern '(?im)no token|never.*token|secret' -Description 'secret-safe contribution guidance'
 Assert-FileContains -RelativePath 'SECURITY.md' -Pattern '(?im)do not.*public|private|security' -Description 'private vulnerability reporting guidance'
 Assert-FileContains -RelativePath 'SECURITY.md' -Pattern '(?i)fail(?:s|ed)? closed' -Description 'fail-closed scanner boundary'
+
+# remote削除contractは全利用例で同じexact expected-OID leaseに固定する。
+# plain deleteやimplicit leaseへ戻ると並行sessionのpost-merge commitを失う。
+$remoteDeleteCommand = 'git -C <repo> push --force-with-lease=refs/heads/fix/<task>:<headRefOid> origin :refs/heads/fix/<task>'
+$remoteDeleteCommandPattern = [regex]::Escape($remoteDeleteCommand)
+foreach ($remoteDeleteContractFile in @(
+    'SKILL.md',
+    'docs/SKILL.ja.md',
+    'examples/cleanup-guard-cheatsheet.md',
+    'examples/full-flow-walkthrough.md'
+)) {
+    Assert-FilePatternCount `
+        -RelativePath $remoteDeleteContractFile `
+        -Pattern $remoteDeleteCommandPattern `
+        -ExpectedCount 1 `
+        -Description 'exact expected-OID remote branch deletion command'
+    Assert-FilePatternCount `
+        -RelativePath $remoteDeleteContractFile `
+        -Pattern 'git -C <repo> push origin --delete fix/<task>' `
+        -ExpectedCount 0 `
+        -Description 'legacy unconditional remote branch deletion commands'
+    Assert-FileContains `
+        -RelativePath $remoteDeleteContractFile `
+        -Pattern '(?s)ls-remote\s+--exit-code\s+--heads\s+origin\s+refs/heads/fix/<task>' `
+        -Description 'remote-absent and exact-ref observation contract'
+    Assert-FileContains `
+        -RelativePath $remoteDeleteContractFile `
+        -Pattern '--json headRefOid -q \.headRefOid' `
+        -Description 'pre-merge PR head OID retention contract'
+}
+Assert-FilePatternCount `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern '--force-with-lease=refs/heads/fix/lease-(?:positive|drift):\$remoteExpectedHeadOid' `
+    -ExpectedCount 2 `
+    -Description 'exact expected-OID local bare-origin lease cases'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Rejected cleanup must preserve the exact second-actor remote tip' `
+    -Description 'remote drift preservation assertion'
+
 Assert-FileContains -RelativePath 'scripts/scan-private-markers.ps1' -Pattern 'private-marker-process\.ps1' -Description 'shared bounded process boundary in scanner'
 Assert-FileContains -RelativePath 'scripts/scan-private-markers.ps1' -Pattern 'ISOLATED_WORKTREE_PR_FLOW_PRIVATE_MARKERS' -Description 'existing local marker environment contract'
 Assert-FileContains -RelativePath 'scripts/scan-private-markers.ps1' -Pattern 'h8nc4y/isolated-worktree-pr-flow' -Description 'repository-only GitHub URL allowlist'
