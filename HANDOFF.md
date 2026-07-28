@@ -1,48 +1,46 @@
 # HANDOFF
 
-更新日: 2026-07-28 (JST)
+更新日: 2026-07-29 (JST)
 
 ## Current state
 
+- [PR #12](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/12) で
+  bounded processの最後のpoll waitを残予算内へ制限した。merge commitは
+  `5a38ea72f8378510fddf0f8701d74b73f6ee2965`、merge treeとfeature treeは
+  `f2b56345ebb8d6cd18c405a2076b2dfcf9445bb5`で一致する。
+- merge後の [post-main run 30385701480](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30385701480)
+  は Windows、Ubuntu 24.04、native macOS 15 の全job・全stepが成功した。
 - このhandoffと同じtreeでは、Windows、Ubuntu 24.04、native macOS 15の
   3 jobすべてが`actions/checkout` v7.0.1のimmutable commit
   `3d3c42e5aac5ba805825da76410c181273ba90b1`を使用する。
 - exact workflow validatorも同じrevisionを要求し、job単位の欠落・重複・
   別revisionに加え、`persist-credentials: false`の欠落・misnest・
   余分なcheckout設定をfail closedで拒否する。
-- 直前の機能変更 [PR #9](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/9)
-  のmerge commit `38129ac068ace39109caa12e20d70fcaa0d9ec54` に対する
-  [post-main run 30237184620](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30237184620)
-  は Windows、Ubuntu 24.04、native macOS 15 の全 job・全 step が成功。
-- open PR / issueは今回のtask選定時点で0件。
 
 ## Current hardening (Class M)
 
-- 目的: Windows native childの100ms監視sliceを維持しながら、operation deadlineの
-  残りが100ms未満なら最後のwaitを残予算まで縮める。0ms以下なら待機せずtimeout判定へ
-  進み、整数秒への丸めやdeadline超過を許さない。
-- 影響: scannerの走査対象、既定timeout、stream監視、tree cleanup、diagnostic label、
-  Windows / Ubuntu / macOSのCI構成は変更しない。変更対象はbounded process helper、
-  静的contract、hostile mutation、境界テストに限定する。
-- source contract:
-  - `PrivateMarker.ContainedProcess`をコンパイルする実`Add-Type -TypeDefinition` sourceは
-    1件だけとし、その中の`WaitForExit(int milliseconds)`は受け取った値を
-    `WaitForSingleObject`へ直接渡す。
-  - operation loopは`min(100, timeout - elapsed)`をmillisecond整数で求め、0以下なら
-    native / managed waitを呼ばない。`$containedProcess.WaitForExit`はloop内に1件だけ、
-    引数は直前に算出した`$remaining`だけとする。
-  - block comment、quoted string、実`Add-Type`外のC# method、正しいcall後の追加rounded
-    call、大小文字を変えたreceiver alias経由の追加wait、dynamic memberをcontract証拠として
-    数えない。
-- test plan:
-  - production変更前のREDとして、readinessが現行literal `100` callerを拒否することを
-    確認する。
-  - hostile mutationでcaller/helper/C# wrapperの秒丸め、full-region comment / string
-    decoy、実`Add-Type`外のmethod decoy、追加rounded call、receiver aliasの大小文字、
-    dynamic member、100ms超過を拒否する。
-  - pure helper境界は残り37ms→37、100ms→100、101ms→100、0ms以下→0を固定する。
-  - scanner full regressionでは既存timeout / containment / tree / streams / diagnostic
-    labelを維持し、Windows PowerShell 5.1とPowerShell 7を直列実行する。
+- Windows native childの100ms監視sliceを維持し、operation deadlineの残りが100ms未満なら
+  最後のwaitを残予算まで縮める。0ms以下ではnative / managed waitを呼ばずtimeout判定へ
+  進む。scannerの走査対象、既定timeout、stream監視、tree cleanup、diagnostic label、
+  Windows / Ubuntu / macOSのCI構成は変更していない。
+- `PrivateMarker.ContainedProcess`をコンパイルする実`Add-Type -TypeDefinition` sourceを
+  ASTで1件に限定し、その中の`WaitForExit(int milliseconds)`が受け取った値を
+  `WaitForSingleObject`へ直接渡すことを検証する。
+- `Invoke-PrivateMarkerProcess`内の全member invocationを列挙し、`WaitForExit`を
+  `OrdinalIgnoreCase`で照合する。dynamic memberはfail closed、receiverは
+  `$containedProcess`、`$process`の順で、いずれも直前に算出した`$remaining`を
+  1引数に取るexact contractとした。
+- hostile mutationはcaller / helper / C# wrapperの秒丸め、100ms超過、comment /
+  string / 実`Add-Type`外のdecoy、追加wait、receiver alias、大小文字違い、
+  dynamic memberを拒否する。pure helperの境界5件は残り37ms→37、100ms→100、
+  101ms→100、0ms以下→0を固定した。
+- TDDの初回RED後、独立reviewでreceiver aliasを見落とすP2、大小文字違いと
+  dynamic memberを見落とすP2を検出し、それぞれhostile mutationを追加してREDを
+  再現してから修正した。最終独立reviewはP0-P3なし。
+- PowerShell 7 / Windows PowerShell 5.1のreadiness、pure helper境界各5件、
+  cleanup guards各16 assertions、scanner full regression、repository
+  private-marker scan、strict UTF-8 / AST / whitespace、Gitleaksはlocalで成功し、
+  Semgrepの対象sourceはなかった。
 
 ## Latest maintenance change (Class M)
 
