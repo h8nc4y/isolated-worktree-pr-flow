@@ -34,6 +34,9 @@ non-obvious parts — which this skill documents from field experience — are:
   plus `branch -d` works after a merge commit (2a), but after a squash or
   rebase merge the branch is never an ancestor — you need the
   "MERGED + headRefOid match" guard (2b) and an explicit `-D`.
+- Remote branch deletion uses an exact expected-OID `--force-with-lease` in
+  every merge mode, so a concurrent post-merge push is rejected atomically
+  instead of being deleted.
 - Deleting the wrong thing at cleanup time is the main hazard; the skill's
   safety conditions are all pre-deletion checks.
 
@@ -171,6 +174,8 @@ worktree を切って PR を作るための手順です。
 - merge 方式別の cleanup ガード: merge commit 方式は `merge-base
   --is-ancestor` + `branch -d`（2a）、squash / rebase 方式は「MERGED +
   headRefOid 一致」ガード + 明示的 `-D`（2b）
+- remote branch 削除は全方式でexact expected-OID付き
+  `--force-with-lease`を使い、merge後の並行pushをatomicに削除拒否
 - 破壊操作の前に全チェックを実行時点で通す安全条件と、並行セッション衝突の
   検知・譲り方・予防
 
@@ -191,6 +196,9 @@ worktree を切って PR を作るための手順です。
 
 ## Limitations
 
+- Exact expected-OID deletion and remote-drift rejection are verified only
+  against a disposable local bare remote. The live GitHub remote path is not
+  checked.
 - The squash/rebase cleanup guard (2b) has disposable synthetic-Git coverage
   for its topology and rejection paths. Its live GitHub squash path was
   measured on 2026-07-23 with

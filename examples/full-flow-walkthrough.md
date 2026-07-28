@@ -82,6 +82,8 @@ gh pr view 42 --repo <owner>/<name> --json state,statusCheckRollup
 ## 5. Merge (mode decided up front: merge commit)
 
 ```bash
+gh pr view 42 --repo <owner>/<name> --json headRefOid -q .headRefOid
+# → save this exact OID as <headRefOid> before merge
 gh pr merge 42 --repo <owner>/<name> --merge
 gh pr view 42 --repo <owner>/<name> --json state,mergedAt,mergeCommit
 # → require: "state": "MERGED"
@@ -92,7 +94,7 @@ gh pr view 42 --repo <owner>/<name> --json state,mergedAt,mergeCommit
 Every check runs BEFORE any deletion:
 
 ```bash
-# (1) PR is merged
+# (1) PR is merged; require the pre-merge headRefOid record to be available
 gh pr view 42 --repo <owner>/<name> --json state,mergedAt
 
 # (2a) branch is an ancestor of the updated default branch
@@ -104,6 +106,10 @@ git -C <repo> status --short
 
 # (5) no leftover node_modules link in the worktree
 test -L ../_worktrees/<task>/node_modules && rm ../_worktrees/<task>/node_modules
+
+# (6) exit 2 means already absent and deletion is skipped; exit 0 must be
+# exactly one headRefOid record before the atomic lease below
+git -C <repo> ls-remote --exit-code --heads origin refs/heads/fix/<task>
 ```
 
 Only after all checks pass:
@@ -112,9 +118,13 @@ Only after all checks pass:
 git -C <repo> worktree remove ../_worktrees/<task>
 git -C <repo> worktree prune
 git -C <repo> branch -d fix/<task>
-git -C <repo> push origin --delete fix/<task>
+git -C <repo> push --force-with-lease=refs/heads/fix/<task>:<headRefOid> origin :refs/heads/fix/<task>
 git -C <repo> remote prune origin
 ```
+
+If the remote branch disappeared before cleanup, skip the push. If another
+session advanced it after the `ls-remote` observation, the exact expected-OID
+lease rejects the deletion instead of removing that session's commit.
 
 ## 7. Final assertion
 

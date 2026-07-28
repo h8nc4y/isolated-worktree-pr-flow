@@ -16,9 +16,17 @@ The format loosely follows Keep a Changelog conventions.
   redirection; validates its OS-aware recursive-cleanup boundary and
   reparse-point rejection; and runs on PowerShell 7 and Windows PowerShell
   5.1 in CI.
+- A disposable local bare-origin regression for remote branch cleanup,
+  covering an exact merged-head deletion and a second actor advancing the
+  remote ref. The drift case must reject deletion and preserve the actor's
+  exact tip.
 
 ### Changed
 
+- Replaced unconditional remote branch deletion with an exact expected-OID
+  `--force-with-lease` for every merge mode, using the PR head retained
+  immediately before merge. An already absent branch is skipped, while any
+  post-merge remote drift is rejected atomically.
 - Kept the Windows native-child poll cadence at 100 milliseconds while
   shrinking the final wait to the exact remaining operation budget. The
   readiness contract now binds the actual `Add-Type` source, direct Win32

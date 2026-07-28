@@ -196,6 +196,7 @@ PowerShell 7 job を含みます。3 job は
      exit 1 になる。「MERGED + headRefOid 一致」guard（安全条件 2b）を使う。
 
    ```powershell
+   gh pr view <PR番号> --repo <owner>/<name> --json headRefOid -q .headRefOid   # merge前にこのexact OIDを保持
    gh pr merge <PR番号> --repo <owner>/<name> --merge      # squash 運用の repo は --squash（安全条件 2b を使う）
    gh pr view <PR番号> --repo <owner>/<name> --json state,mergedAt,mergeCommit
    ```
@@ -222,7 +223,9 @@ PowerShell 7 job を含みます。3 job は
 で状態がドリフトし得るため、時間が空いたら直前に再実行する（実測）。
 
 1. `gh pr view <PR番号> --repo <owner>/<name> --json state,mergedAt` が
-   `MERGED`。
+   `MERGED` を返し、merge直前に記録した空でないexact `headRefOid` が保持されて
+   いること。記録が無ければ、merge後に動いた可能性があるhead branchを読み直さず
+   fail closedとする。両merge方式とも安全条件6までstable OIDが必要。
 2. merge 方式に対応した未マージ取りこぼし検証。方式を混同しない — squash 後に
    2a を使うと正しく merge 済みでも永久に通らず、squash 後の `branch -d` は
    upstream（`origin/fix/...`）が残っていれば merged-to-upstream 判定で素通り
@@ -240,8 +243,9 @@ PowerShell 7 job を含みます。3 job は
      だったことを確認済みであることを条件に `-D` で削除してよい — 2b と同じ
      「guard 確認後の `-D`」の型であり、guard 未実施の `-D` は引き続き不可。
    - **2b — `--squash` / `--rebase` 方式**:
-     `gh pr view <PR番号> --repo <owner>/<name> --json state,mergeCommit,headRefOid`
-     で `state` / `mergeCommit` / `headRefOid` を取得する。`mergeCommit` は
+     `gh pr view <PR番号> --repo <owner>/<name> --json state,mergeCommit` で
+     `state` / `mergeCommit` を取得し、merge前に保持した `headRefOid` を使う。
+     `mergeCommit` は
      JSON オブジェクトで、commit ハッシュはその `oid` フィールド
      （`-q .mergeCommit.oid` で抽出できる）。`headRefOid` は素の文字列。
      そのうえで次の両方を確認する:
@@ -280,6 +284,17 @@ PowerShell 7 job を含みます。3 job は
    `node_modules` を巻き込み削除する恐れがある。再帰削除が junction / symlink を
    辿るかどうかはツールとバージョンに依存する（未検証）— それに頼らず、リンクは
    明示的に外す。
+6. `origin` に `refs/heads/fix/<task>` が残っている場合、削除対象は安全条件1で
+   保持を確認したexact `headRefOid` と一致するrefだけに限定する。
+   `git -C <repo> ls-remote --exit-code --heads origin refs/heads/fix/<task>` の
+   exit 2は既にremote branchが無いので削除をskip、exit 0は`<headRefOid>` の
+   exact 1 recordだけを受理し、それ以外はfail closedとする。
+   観測後にも別sessionがrefを前進できるため、削除は下記のexpected-value付きlease
+   だけで実行する。remote-tracking refに依存する暗黙の`--force-with-lease`は
+   background fetchで観測が動くため使わない。exact leaseならremote refがPR head
+   から変わった時点でserverが削除をatomicに拒否する。
+   exact-head削除とpost-merge drift拒否は、local bare remoteとsyntheticなsecond
+   actorで回帰検証する。同じleaseの実GitHub remote経路は未確認。
 
 チェックが全て通ってから実行する:
 
@@ -287,7 +302,7 @@ PowerShell 7 job を含みます。3 job は
 git -C <repo> worktree remove ..\_worktrees\<task>
 git -C <repo> worktree prune
 git -C <repo> branch -d fix/<task>          # 2a（--merge）方式。not fully merged 拒否なら 2a の注意（is-ancestor 確認後の -D）。2b 方式は guard 確認済みの場合のみ -D
-git -C <repo> push origin --delete fix/<task>   # remote に残っていれば
+git -C <repo> push --force-with-lease=refs/heads/fix/<task>:<headRefOid> origin :refs/heads/fix/<task>   # exact remote refだけ。既に無ければskip
 git -C <repo> remote prune origin
 ```
 
