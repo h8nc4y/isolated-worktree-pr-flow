@@ -295,7 +295,11 @@
 
 ## Next step
 
-resolver fix、fingerprint baseline、文書を再検証してfreezeし、同じreviewerへ
-最終read-only reviewを依頼する。clear後は修正5ファイルだけをstageし、global
-pre-commit guardを通して追加commit/pushする。PR #18のCI再実行、self-review、
-merge、post-main確認と安全なbranch/worktree cleanupまで直列に完了する。
+PR #18はmerge commit `f9a244f`で`main`へ統合済み。PR CI run
+`30464901354`とmain CI run `30465532658`は、いずれもWindows / Ubuntu /
+macOSの3 jobがsuccessだった。PR #18のtask branch / worktree cleanupは完了し、
+`main == origin/main`、tracked tree clean、open PR 0件を確認した。
+
+fresh CLI processのsmoke実行はpolicyに拒否され、実行前に停止したため**未確認**。
+拒否後の再試行や代替経路は使っていない。現時点で、安全に自走できる具体的な
+local backlogはない。
