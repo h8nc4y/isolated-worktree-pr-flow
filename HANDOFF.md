@@ -55,7 +55,7 @@
   保存済みidentityをlexicalに追跡する。
   helper security reviewとtest-only外部回復fixtureの静的reviewはclear。
   normalized baselineは`a685f41e...03d1cc`から`255a009c...e25ee`へ更新した。
-  最終freeze reviewは未確認。
+  helper/testを含む最終6-file freeze reviewもP0-P3なしでclear。
 - current cleanup guardsはnested/directのPowerShell 7 / 5.1で各211
   assertions、Linux containerで245 assertions成功。正規logical slot内で両hostの
   private-marker self-testとrepository scanも成功した。Gitleaksはcustom global-hook
