@@ -233,7 +233,7 @@ PowerShell 7 job を含みます。3 job は
    永久拒否される。
 
    - **2a — `--merge`（merge commit）方式**:
-     `git -C <repo> merge-base --is-ancestor fix/<task> origin/<default>`
+     `git -C <repo> merge-base --is-ancestor refs/heads/fix/<task> refs/remotes/origin/<default>`
      が exit 0（PowerShell は `$LASTEXITCODE`、POSIX シェルは `echo $?` で確認）。
      branch 削除は `-d` — 未マージの取りこぼしがあれば git 自身が拒否してくれる
      （実測）。注意: `-d` の merged 判定は「upstream があれば upstream、なければ
@@ -249,12 +249,16 @@ PowerShell 7 job を含みます。3 job は
      JSON オブジェクトで、commit ハッシュはその `oid` フィールド
      （`-q .mergeCommit.oid` で抽出できる）。`headRefOid` は素の文字列。
      そのうえで次の両方を確認する:
-     (i) `git -C <repo> merge-base --is-ancestor <mergeCommit-oid> origin/<default>`
-     が exit 0、(ii) `git -C <repo> rev-parse fix/<task>` が
+     (i) `git -C <repo> merge-base --is-ancestor <mergeCommit-oid> refs/remotes/origin/<default>`
+     が exit 0、(ii) `git -C <repo> rev-parse refs/heads/fix/<task>` が
      `headRefOid` と一致。(ii) が squash 方式における「commit の取りこぼしなし」
      の代替検証で、merge された PR の head が local branch の先端そのものである
      ことを証明する。両方通ったときのみ、意図的な `git branch -D` で削除する
-     （この guard が `-d` の代替）。
+     （この guard が `-d` の代替）。両guardのnamed operandを完全修飾する。
+     local branchは`refs/heads/fix/<task>`、fetch済みdefault branchは
+     `refs/remotes/origin/<default>`を使う。同名の`fix/<task>`または
+     `origin/<default>` tagがあると、Gitの短縮ref解決が曖昧になり、検証対象ref
+     ではなくtagを検証してしまう可能性があるため。
      guard 2b の履歴形状と拒否経路は `scripts/test-cleanup-guards.ps1` の
      使い捨て合成 Git 履歴で回帰検証する。このテストは system/global Git config、
      hook、署名、`rebase.updateRefs` を隔離し、ambient な `GIT_*` 環境変数を全て

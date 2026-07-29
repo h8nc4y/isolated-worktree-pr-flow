@@ -34,6 +34,9 @@ non-obvious parts — which this skill documents from field experience — are:
   plus `branch -d` works after a merge commit (2a), but after a squash or
   rebase merge the branch is never an ancestor — you need the
   "MERGED + headRefOid match" guard (2b) and an explicit `-D`.
+- Local cleanup guards fully qualify both `refs/heads/...` and
+  `refs/remotes/...` inputs, so same-name tags cannot redirect Git's
+  shorthand ref resolution away from the refs being proved.
 - Remote branch deletion uses an exact expected-OID `--force-with-lease` in
   every merge mode, so a concurrent post-merge push is rejected atomically
   instead of being deleted.
@@ -174,6 +177,8 @@ worktree を切って PR を作るための手順です。
 - merge 方式別の cleanup ガード: merge commit 方式は `merge-base
   --is-ancestor` + `branch -d`（2a）、squash / rebase 方式は「MERGED +
   headRefOid 一致」ガード + 明示的 `-D`（2b）
+- local cleanup guardの入力は`refs/heads/...`と`refs/remotes/...`へ完全修飾し、
+  同名tagによる短縮refの誤解決で検証対象以外を参照しない
 - remote branch 削除は全方式でexact expected-OID付き
   `--force-with-lease`を使い、merge後の並行pushをatomicに削除拒否
 - 破壊操作の前に全チェックを実行時点で通す安全条件と、並行セッション衝突の

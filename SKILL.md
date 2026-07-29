@@ -263,7 +263,7 @@ passed, re-run the checks immediately before executing (field-tested).
    or is refused forever as "not fully merged" (if the upstream is gone).
 
    - **2a — `--merge` (merge commit) mode**:
-     `git -C <repo> merge-base --is-ancestor fix/<task> origin/<default>`
+     `git -C <repo> merge-base --is-ancestor refs/heads/fix/<task> refs/remotes/origin/<default>`
      exits 0 (check `$LASTEXITCODE` in PowerShell, `echo $?` in POSIX
      shells). Delete the branch with `-d`, so git itself still refuses if
      anything was left unmerged (field-tested). Caveat: `-d` judges "merged"
@@ -280,12 +280,17 @@ passed, re-run the checks immediately before executing (field-tested).
      Note that `mergeCommit` is a JSON object — the commit hash is its `oid`
      field (`-q .mergeCommit.oid` extracts it); `headRefOid` is a plain
      string. Then confirm both: (i)
-     `git -C <repo> merge-base --is-ancestor <mergeCommit-oid> origin/<default>`
-     exits 0, and (ii) `git -C <repo> rev-parse fix/<task>` equals
+     `git -C <repo> merge-base --is-ancestor <mergeCommit-oid> refs/remotes/origin/<default>`
+     exits 0, and (ii) `git -C <repo> rev-parse refs/heads/fix/<task>` equals
      `headRefOid`. Check (ii) is the squash-mode replacement for "no commits
      left behind": it proves the merged PR head is exactly your local branch
      tip. Only when both hold, delete with an explicit `git branch -D` (this
-     guard substitutes for `-d`).
+     guard substitutes for `-d`). Fully qualify both named operands:
+     `refs/heads/fix/<task>` for the local branch and
+     `refs/remotes/origin/<default>` for the fetched default branch. Tags
+     named `fix/<task>` or `origin/<default>` otherwise make Git's shorthand
+     ref resolution ambiguous and can redirect the guard away from the refs
+     it is supposed to prove.
      Guard 2b's topology and rejection paths are covered by disposable
      synthetic Git histories in `scripts/test-cleanup-guards.ps1`. The test
      isolates system/global Git configuration, hooks, signing, and

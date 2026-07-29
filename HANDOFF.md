@@ -4,6 +4,14 @@
 
 ## Current state
 
+- local cleanup guard 2a / 2bのnamed operandを`refs/heads/fix/<task>`と
+  `refs/remotes/origin/<default>`へ完全修飾した。同名tagが短縮ref解決を奪い、
+  削除対象branchまたはfetch済みdefault branch以外を検証するfalse-passを、
+  使い捨てmerge / squash fixtureで再現して拒否する。
+- 同じtreeのlocal検証では、cleanup guardsがPowerShell 7 / Windows PowerShell
+  5.1で各28 assertions、readiness、両hostのscanner self-testとrepository
+  private-marker scan、Gitleaks、whitespaceが成功した。Semgrep固定ruleの対象となる
+  Python / JavaScript / TypeScript source変更は無い。
 - [PR #14](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/14) で、
   merge後のremote branch削除を `headRefOid` のexact expected-value leaseへ
   変更した。feature commitは
@@ -31,6 +39,18 @@
   余分なcheckout設定をfail closedで拒否する。
 
 ## Current hardening (Class M)
+
+- guard 2a / 2bは、local branchを`refs/heads/fix/<task>`、fetch済みdefault
+  branchを`refs/remotes/origin/<default>`で参照する。`fix/<task>`と
+  `origin/<default>`の短縮refは利用例から排除し、readiness validatorが再混入を
+  fail closedで拒否する。
+- synthetic fixtureは、merge済みheadにlocal / remote同名tagを置き、実branch
+  またはremote-tracking refだけを異なるcommitへ進める。短縮refならtagを選んで
+  false-passする前提と、完全修飾refなら対象の不一致を拒否する経路を固定する。
+- remote削除のexact expected-OID lease、absent skip、second-actor drift拒否契約は
+  変更していない。
+
+## Previous remote-cleanup hardening (Class M)
 
 - 両merge方式でmerge直前の `headRefOid` を保持し、remote refが既に無ければ
   削除をskipする。

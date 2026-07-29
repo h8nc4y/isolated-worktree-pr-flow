@@ -99,7 +99,7 @@ gh pr view 42 --repo <owner>/<name> --json state,mergedAt
 
 # (2a) branch is an ancestor of the updated default branch
 git -C <repo> fetch origin
-git -C <repo> merge-base --is-ancestor fix/<task> origin/main; echo $?   # require 0
+git -C <repo> merge-base --is-ancestor refs/heads/fix/<task> refs/remotes/origin/main; echo $?   # require 0
 
 # (4) main checkout WIP unchanged vs step 0 record
 git -C <repo> status --short
