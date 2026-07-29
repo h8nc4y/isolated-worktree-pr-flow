@@ -335,7 +335,7 @@ behavior without using GitHub, credentials, or a real repository. The
 PowerShell 7 and Windows PowerShell 5.1. POSIX-only coverage adds ancestor
 symlink alias binding, missing guard leaves with retained Git metadata, and a
 false-success removal result whose final record still remains; the local Linux
-fixture exposes 243 assertions. Each Git invocation ignores
+fixture exposes 245 assertions. Each Git invocation ignores
 system/global configuration, signing, hooks, and
 `rebase.updateRefs`; it snapshots and clears every ambient `GIT_*` variable
 before setting only its isolated config and non-interactive prompt policy.
@@ -350,6 +350,8 @@ path and Git's porcelain record exist. It then stores Git's normalized lexical
 record path as the stable identity for every later invariant and release
 check. This accepts macOS `/var` and `/private/var` aliases without treating a
 missing guard leaf or stale metadata as a successful release.
+If a link target reintroduces an ancestor alias, comparison restarts from its
+root; visited-path detection and a 64-rewrite limit keep that re-walk finite.
 
 Readiness validation treats `scripts/remove-local-branch-cas.ps1` as a
 closed-world reviewed artifact. It normalizes only CRLF or lone CR to LF,

@@ -548,11 +548,35 @@ try {
         $pathAliasPhysicalChild = Join-Path $pathAliasPhysicalRoot 'child'
         $pathAliasLink = Join-Path $testRoot 'path-alias-link'
         $pathAliasChild = Join-Path $pathAliasLink 'child'
+        $reenteredAliasPhysicalParent = Join-Path `
+            $testRoot `
+            'path-alias-reentry-physical'
+        $reenteredAliasPhysicalChild = Join-Path `
+            $reenteredAliasPhysicalParent `
+            'target/child'
+        $reenteredAliasParentLink = Join-Path `
+            $testRoot `
+            'path-alias-reentry-parent'
+        $reenteredAliasInnerLink = Join-Path `
+            $reenteredAliasPhysicalParent `
+            'inner-link'
+        $reenteredAliasChild = Join-Path $reenteredAliasInnerLink 'child'
         [System.IO.Directory]::CreateDirectory($pathAliasPhysicalChild) | Out-Null
+        [System.IO.Directory]::CreateDirectory(
+            $reenteredAliasPhysicalChild
+        ) | Out-Null
         New-Item `
             -ItemType SymbolicLink `
             -Path $pathAliasLink `
             -Target $pathAliasPhysicalRoot | Out-Null
+        New-Item `
+            -ItemType SymbolicLink `
+            -Path $reenteredAliasParentLink `
+            -Target $reenteredAliasPhysicalParent | Out-Null
+        New-Item `
+            -ItemType SymbolicLink `
+            -Path $reenteredAliasInnerLink `
+            -Target (Join-Path $reenteredAliasParentLink 'target') | Out-Null
         try {
             Assert-False `
                 -Condition (Test-LocalCleanupPathEqual `
@@ -567,8 +591,23 @@ try {
                     -ResolveExistingPhysicalIdentity
                 ) `
                 -Message 'Existing-path identity comparison must resolve an ancestor symlink alias'
+            Assert-False `
+                -Condition (Test-LocalCleanupPathEqual `
+                    -Left $reenteredAliasChild `
+                    -Right $reenteredAliasPhysicalChild
+                ) `
+                -Message 'Re-entered ancestor alias must remain lexically distinct'
+            Assert-True `
+                -Condition (Test-LocalCleanupPathEqual `
+                    -Left $reenteredAliasChild `
+                    -Right $reenteredAliasPhysicalChild `
+                    -ResolveExistingPhysicalIdentity
+                ) `
+                -Message 'Physical comparison must re-walk aliases introduced by a link target'
         }
         finally {
+            Remove-Item -LiteralPath $reenteredAliasInnerLink -Force
+            Remove-Item -LiteralPath $reenteredAliasParentLink -Force
             Remove-Item -LiteralPath $pathAliasLink -Force
         }
     }

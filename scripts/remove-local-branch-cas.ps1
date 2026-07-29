@@ -581,40 +581,92 @@ function Test-LocalCleanupPathEqual {
             $physicalIdentities = @()
             foreach ($candidatePath in @($resolvedLeft, $resolvedRight)) {
                 # lexical pathはGit操作・confinementへそのまま残す。比較時だけ既存segmentを
-                # physical targetへ辿り、macOSのsystem `/var` aliasを`/private/var`と同一化する。
-                if (
-                    -not [System.IO.Directory]::Exists($candidatePath) -and
-                    -not [System.IO.File]::Exists($candidatePath)
-                ) {
-                    return $false
-                }
-                $pathRoot = [System.IO.Path]::GetPathRoot($candidatePath)
-                $physicalPath = $pathRoot
-                $relativePath = $candidatePath.Substring($pathRoot.Length)
-                $segments = $relativePath.Split(
-                    [char[]]@(
-                        [System.IO.Path]::DirectorySeparatorChar,
-                        [System.IO.Path]::AltDirectorySeparatorChar
-                    ),
-                    [System.StringSplitOptions]::RemoveEmptyEntries
-                )
-                foreach ($segment in $segments) {
-                    $nextPath = [System.IO.Path]::Combine($physicalPath, $segment)
-                    $pathInfo = if ([System.IO.Directory]::Exists($nextPath)) {
-                        [System.IO.DirectoryInfo]::new($nextPath)
-                    } elseif ([System.IO.File]::Exists($nextPath)) {
-                        [System.IO.FileInfo]::new($nextPath)
-                    } else {
+                # physical targetへ辿る。link targetが`/var`等のancestor aliasを再導入した
+                # 場合はrootから再walkし、macOSの`/private/var`表記へ最後まで収束させる。
+                $pendingPath = $candidatePath
+                $rewriteCount = 0
+                $visitedPaths =
+                    [System.Collections.Generic.HashSet[string]]::new(
+                        [System.StringComparer]::Ordinal
+                    )
+                while ($true) {
+                    if (-not $visitedPaths.Add($pendingPath)) {
                         return $false
                     }
-                    $linkTarget = $pathInfo.ResolveLinkTarget($true)
-                    $physicalPath = if ($null -ne $linkTarget) {
-                        $linkTarget.FullName
-                    } else {
-                        $pathInfo.FullName
+                    if (
+                        -not [System.IO.Directory]::Exists($pendingPath) -and
+                        -not [System.IO.File]::Exists($pendingPath)
+                    ) {
+                        return $false
                     }
+                    $pathRoot = [System.IO.Path]::GetPathRoot($pendingPath)
+                    if ([string]::IsNullOrEmpty($pathRoot)) {
+                        return $false
+                    }
+                    $physicalPath = $pathRoot
+                    $relativePath = $pendingPath.Substring($pathRoot.Length)
+                    $segments = $relativePath.Split(
+                        [char[]]@(
+                            [System.IO.Path]::DirectorySeparatorChar,
+                            [System.IO.Path]::AltDirectorySeparatorChar
+                        ),
+                        [System.StringSplitOptions]::RemoveEmptyEntries
+                    )
+                    $rewrittenPath = $null
+                    for (
+                        $segmentIndex = 0;
+                        $segmentIndex -lt $segments.Length;
+                        $segmentIndex++
+                    ) {
+                        $nextPath = [System.IO.Path]::Combine(
+                            $physicalPath,
+                            $segments[$segmentIndex]
+                        )
+                        $pathInfo = if ([System.IO.Directory]::Exists($nextPath)) {
+                            [System.IO.DirectoryInfo]::new($nextPath)
+                        } elseif ([System.IO.File]::Exists($nextPath)) {
+                            [System.IO.FileInfo]::new($nextPath)
+                        } else {
+                            return $false
+                        }
+                        $linkTarget = $pathInfo.ResolveLinkTarget($true)
+                        if ($null -eq $linkTarget) {
+                            $physicalPath = $pathInfo.FullName
+                            continue
+                        }
+
+                        # final targetの文字列表記自体にもancestor aliasが含まれ得る。
+                        # 未処理segmentを付け直してrootから再開し、64 rewriteで打ち切る。
+                        $rewriteCount++
+                        if ($rewriteCount -gt 64) {
+                            return $false
+                        }
+                        $rewrittenPath = [System.IO.Path]::GetFullPath(
+                            $linkTarget.FullName
+                        )
+                        for (
+                            $remainingIndex = $segmentIndex + 1;
+                            $remainingIndex -lt $segments.Length;
+                            $remainingIndex++
+                        ) {
+                            $rewrittenPath = [System.IO.Path]::Combine(
+                                $rewrittenPath,
+                                $segments[$remainingIndex]
+                            )
+                        }
+                        $rewrittenPath = [System.IO.Path]::GetFullPath(
+                            $rewrittenPath
+                        )
+                        break
+                    }
+                    if ($null -eq $rewrittenPath) {
+                        $physicalIdentities += [System.IO.Path]::GetFullPath(
+                            $physicalPath
+                        )
+                        break
+                    }
+                    $pendingPath = $rewrittenPath
                 }
-                $physicalIdentities += [System.IO.Path]::GetFullPath($physicalPath)
             }
             $resolvedLeft = $physicalIdentities[0]
             $resolvedRight = $physicalIdentities[1]

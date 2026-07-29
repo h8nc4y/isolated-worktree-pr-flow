@@ -20,7 +20,7 @@
   scopeでもfunction identityを解決できる。dot-source/test hookはtrusted harnessであり、
   敵対的な同一runspace非同期mutationは保証外とする。
 - disposable local fixtureはWindowsのPowerShell 7 / Windows PowerShell 5.1で
-  各211 assertions、local LinuxのPowerShell 7で243 assertionsを持つ。
+  各211 assertions、local LinuxのPowerShell 7で245 assertionsを持つ。
   既存・interleaved checkout、通常add/switchのguard拒否、config観測→rename
   drift、config付きbranchのCAS拒否、同nonce config writer、CAS直前drift、
   CAS後の同名branch再作成、予期しないguard entry、ambient Git redirect、
@@ -50,12 +50,14 @@
   Ubuntuが成功した一方、macOSのOS temp `/var`とGit record `/private/var`のaliasを
   lexical mismatchとして拒否した。取得時に既存pathのphysical identityを一度だけ
   照合し、Gitのnormalized lexical record pathをstable identityとして保存するよう
-  修正した。leaf消失後と最終releaseでは保存済みidentityをlexicalに追跡する。
+  修正した。link targetがancestor aliasを再導入する場合はrootから再walkし、
+  visited pathと64 rewrite上限で有限化する。leaf消失後と最終releaseでは
+  保存済みidentityをlexicalに追跡する。
   helper security reviewとtest-only外部回復fixtureの静的reviewはclear。
-  normalized baselineは`cd9238e...d8972`から`a685f41e...03d1cc`へ更新した。
+  normalized baselineは`a685f41e...03d1cc`から`255a009c...e25ee`へ更新した。
   最終freeze reviewは未確認。
 - current cleanup guardsはnested/directのPowerShell 7 / 5.1で各211
-  assertions、Linux containerで243 assertions成功。正規logical slot内で両hostの
+  assertions、Linux containerで245 assertions成功。正規logical slot内で両hostの
   private-marker self-testとrepository scanも成功した。Gitleaksはcustom global-hook
   configによるworktree/history scanが成功し、Semgrep固定ruleの対象source変更は0件。
   fresh child processのCLI smokeは、fixture/processを作る前にexecution policyで拒否された。

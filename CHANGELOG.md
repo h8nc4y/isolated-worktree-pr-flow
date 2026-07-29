@@ -36,7 +36,7 @@ The format loosely follows Keep a Changelog conventions.
     PowerShell 7 and Windows PowerShell 5.1 fixture exposes 211 assertions.
     POSIX-only cases cover ancestor symlink aliases, a missing guard leaf with
     stale Git metadata, and false-success removal with a remaining final
-    record; the local Linux fixture exposes 243 assertions.
+    record; the local Linux fixture exposes 245 assertions.
 
 ### Changed
 
@@ -83,6 +83,8 @@ The format loosely follows Keep a Changelog conventions.
   stable identity for all later checks. macOS `/var` and `/private/var`
   aliases therefore bind once, while a missing leaf or stale record remains
   fail closed during recovery and final release.
+  Link targets that reintroduce an ancestor alias are re-walked from the root
+  with visited-path cycle detection and a 64-rewrite limit.
 - Replaced the open-world cleanup-helper AST deny/allow lists and mutation
   catalog with one LF-normalized, UTF-8-no-BOM SHA-256 closed-world
   fingerprint. Parse success, the ordered 30 top-level functions, destructive

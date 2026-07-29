@@ -636,7 +636,7 @@ function Get-LfNormalizedSha256 {
 # この値は自動更新しない。helperの実diffをreviewした変更だけが、同じPRで
 # old/new digestを明示してbaselineを更新できる。
 $script:LocalBranchCleanupNormalizedSha256 =
-    'a685f41ec125f408ad121c3cc65fb57763d48e32b86ac56a90670c021803d1cc'
+    '255a009c39891dee72d09ba1666999cacaa0f65d4691de405186cb01c85e25ee'
 
 function Test-LocalBranchCleanupContract {
     param(
