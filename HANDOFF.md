@@ -4,6 +4,53 @@
 
 ## Current state
 
+- guard 2bとguard 2a forced fallbackのlocal branch削除を
+  `scripts/remove-local-branch-cas.ps1`へ集約した。
+  helperはtask slugをbranch生成前に検証し、Git common directoryのnonblocking
+  owner-nonce cleanup lock、nonce由来のGit-native guard worktree、Git標準
+  `config.lock` writer排他、owner config隔離、expected-OID CAS、最終確認を
+  一つのcritical flowで扱う。
+  各Git child processはambient `GIT_*`を全消去し、安全値だけを設定してから元の
+  環境をexactに復元する。ordinal keyでPOSIXのcase-variant名も別entryに保つ。
+  productionはfresh CLI processを保証境界とする。GitをApplicationとして解決し、
+  PATH先頭のexisting absolute `git` / `git.exe` pathを保持する。critical built-inは
+  module-qualifiedで呼ぶ。closureへreview済みfunction identityを保持し、同名aliasと
+  同期hookによるfunction差替えを次のcritical call前に拒否する。dot-source/test hookは
+  trusted harnessであり、敵対的な同一runspace非同期mutationは保証外とする。
+- disposable local fixtureはPowerShell 7 / Windows PowerShell 5.1で各211
+  assertionsを持つ。
+  既存・interleaved checkout、通常add/switchのguard拒否、config観測→rename
+  drift、config付きbranchのCAS拒否、同nonce config writer、CAS直前drift、
+  CAS後の同名branch再作成、予期しないguard entry、ambient Git redirect、
+  active/stale cleanup lock、nonce不一致、標準config writer排他、
+  configless→config race、既存/reparse/path/content drift config lock、
+  CAS前のowner config回復競合、ambient alias / function差替えを
+  fail closedで固定した。
+- 独立reviewは、worktree/config race、ambient Git routing、CAS直前の
+  checkout race（P1）、validatorのcondition/body false-greenと二次回復失敗（P2）、
+  case-sensitive環境snapshot（P2）、task slugのregex注入（P3）を検出した。
+  最新reviewでは、全wrapper callを覆わないallowlistとmodule/path-qualified
+  process名回避（P1）、queryと`--remove-section`の間に同nonce writerを消し得る
+  non-atomic config cleanup（P2）を検出した。現在は自動config removeを廃止し、
+  config付きbranchをCAS前で拒否する。
+  その後のreviewで、configless観測後のconfig再作成race、alias/proxy回避、
+  destructive identity/flag resetを検出した。現在はGit標準`config.lock`を
+  最終config照会からpost/final checkまでowner nonce付きで保持する。
+  open-world AST allow/denyとhostile mutation catalogは未知構文を閉じ切れず複雑化したため、
+  helper全体のLF正規化SHA-256 closed-world fingerprintへ置換した。parse、ordered
+  top-level 30 functions、phase順、top-level execution skeleton、Application Git path、
+  CLI entryだけをsmall semantic anchorとして残す。baselineは自動更新せずhelper diffと
+  old/new digestを同じreviewで確認する。
+  直前freezeの独立reviewはclearした。実行したreadinessでsemantic anchorと
+  Windows PowerShell 5.1のUTF-8 no-BOM読取りを修正したため、最終freeze reviewは未確認。
+- 現WIPのcleanup guardsとreadinessはPowerShell 7 / 5.1で成功し、
+  cleanup guardsは各211 assertionsを確認した。正規logical slot内で両hostの
+  private-marker self-testとrepository scanも成功した。Gitleaksはcustom global-hook
+  configによるworktree/history scanが成功し、Semgrep固定ruleの対象source変更は0件。
+  fresh child processのCLI smokeは、fixture/processを作る前にexecution policyで拒否された。
+  同じ操作の再試行や迂回はせず、CLI smokeは未確認として残す。
+  実GitHub local-CAS、実GitHub競合、production、credential、OAuth、real data、
+  paid serviceは実施していない。
 - [PR #16](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/16) で、
   cleanup guard 2a / 2bのnamed operandを`refs/heads/fix/<task>`と
   `refs/remotes/origin/<default>`へ完全修飾した。feature commitは
@@ -47,6 +94,48 @@
   余分なcheckout設定をfail closedで拒否する。
 
 ## Current hardening (Class M)
+
+- task slugはbranch/ref/config queryを組み立てる前に`\A[a-z0-9-]+\z`へ限定し、
+  末尾LFを含む入力も拒否する。
+- repo-common lockは`CreateNew`を一度だけ試し、owner nonceを各破壊phaseと`finally`で
+  再確認する。
+  active/stale/所有不確実なlockを自動削除しない。
+- 全ambient `GIT_*`をsnapshot/clearし、isolated configとprompt controlだけを
+  exact Name/Value pairで設定する。ordinal dictionaryを型変換せず返し、各Git
+  callの`finally`にあるforeach body直下で元の存在と値をexactに復元する。
+- production利用はfresh CLI processに限定する。GitはApplicationとして解決し、
+  PATH先頭のexisting absolute `git` / `git.exe` `.Path`だけを使う。criticalな
+  PowerShell built-inはmodule-qualifiedで呼ぶ。review済みfunction ScriptBlock identityを
+  closureへ固定し、同名aliasと同期hookによるfunction差替えを再検査する。
+  dot-source/test hookはtrusted harnessであり、敵対的な同一runspace非同期mutationは
+  協調protocolの保証外とする。
+- lock内でnonce由来の`--no-checkout` guard worktreeを取得する。
+  exact path、fully-qualified branchのsole porcelain record、expected
+  common-directory marker、non-reparseかつ`.git`だけのrootを繰り返し確認する。
+  通常のworktree add/switchはGit native occupancyが拒否する。
+  Git標準common-dir `config.lock`をowner nonce付き`CreateNew`で単発取得し、
+  exact root/path/reparse/handle/path nonceを最終config照会からCAS/post/final
+  checkまで保持する。通常config writer、既存lock、所有不確実はfail closedにする。
+  自動CASはconfigなしbranchだけを対象にする。元configがあれば
+  `branch.codex-cleanup-<nonce>`へ隔離し、rename直後/CAS直前にexact snapshotを
+  照合したうえでCASを拒否する。Git configにatomic expected-value section deleteが
+  無いため、自動removeもrename-backも行わず、temporary config、ref、guard、lockを
+  外部回復用に保持する。
+- guard cleanupはnormal removeを先に試す。
+  CAS outcome既知、またはCAS前拒否でbranchがexpected OIDのままであり、かつ全owner
+  invariant再確認済みの場合だけ、Gitのexact-path `worktree remove --force`を
+  一度許可する。
+  予期しないentry・metadata・回復失敗はguardとlockを保持し、branchを再削除しない。
+- readiness validatorはhelper全体をCRLF/裸CRだけLFへ正規化し、UTF-8 no-BOMの
+  SHA-256 closed-world fingerprintで固定する。code、comment、空白のその他の変更を
+  全て拒否する。parse、ordered top-level 30 functions、phase順、top-level execution
+  skeleton、Application Git path、review済みCLI entryをsmall semantic anchorとして残す。
+  self-testは1文字drift拒否とCRLF/LF同値だけを確認する。baseline変更は自動化せず、
+  helper実diffとold/new digestを同じreview itemにする。
+- remote branchのexact expected-OID leaseと、guard 2a / 2bの完全修飾ref契約は
+  変更していない。
+
+## Previous ref-qualification hardening (Class M)
 
 - guard 2a / 2bは、local branchを`refs/heads/fix/<task>`、fetch済みdefault
   branchを`refs/remotes/origin/<default>`で参照する。`fix/<task>`と
@@ -135,12 +224,16 @@
   境界でfail closedする。
 - remote branch cleanupはmerge直前のPR headだけを削除でき、既存のabsent refはskip、
   post-merge driftはそのexact remote tipを保持したままfail closedする。
+- local強制削除はmerge直前のPR headだけをCAS削除できる。
+  checkout/ref/config/lockの競合時は、別actorのtip、reflog、configを保持して
+  fail closedする。
 
 ## Key files
 
 - `.github/workflows/validate.yml`: 3 runnerのCI契約。
-- `scripts/validate-oss-readiness.ps1`: workflow/documentのexact contract。
-- `scripts/test-cleanup-guards.ps1`: merge topologyとremote削除leaseのsynthetic regression。
+- `scripts/remove-local-branch-cas.ps1`: repo-common lock内のlocal branch CAS helper。
+- `scripts/validate-oss-readiness.ps1`: workflow/document/helper phaseのexact contract。
+- `scripts/test-cleanup-guards.ps1`: merge topologyとlocal/remote削除CASのsynthetic regression。
 - `scripts/private-marker-process.ps1`: bounded child-process境界。
 - `scripts/scan-private-markers.ps1`: public-safe marker scan。
 - `scripts/test-scan-private-markers.ps1`: hostile fixtureを含むfull regression。
@@ -161,6 +254,12 @@
   削除直前にrootとowner markerを再取得し、差替えを検知したらfail closedする。
 - remote削除のexpected OIDはmerge直前の `headRefOid` を保持する。merge後にhead
   branchを読み直さず、explicit expected-value lease以外の削除を許可しない。
+- local強制削除も同じ`headRefOid`を`update-ref -d`のexpected old OIDにする。
+  自動CASはconfigなしbranchだけに限定する。branch configがあればCAS前にowner
+  nonce付きsectionへrenameし、rename直後/CAS直前のexact snapshot照合後も
+  atomic config delete不在のためCASを拒否する。自動rename-back/removeは行わない。
+- repo cleanup lockは協調protocolであり、Git全体のmutexではない。
+  direct Git plumbingでprotocolを迂回するactorは保証範囲外である。
 
 ## Verification commands
 
@@ -175,9 +274,16 @@
 - macOSの証拠はGitHub-hosted `macos-15` runner上のCI契約に限定される。owner一般実機は未確認。
 - v7.0.1の実行互換性はGitHub-hosted PR / main CIで確認する。local readinessは
   YAMLと文書契約を検証するが、action自体はlocal実行しない。
+- expected-OID local CASとdrift拒否はdisposable fixtureだけで検証した。
+  実GitHub branchと実GitHub競合でのlocal CASは未確認。
+- repo-common lockは協調session間のcleanupを直列化する。
+  lockを使わない任意のGit操作を停止するものではない。
 - deploy、release、credential、OAuth、real data、paid service操作は実施していない。
 
 ## Next step
 
-新しいissue、PR feedback、CI failureがなければ、exact expected-OID契約を維持し
-つつ、次の最高価値の小さな改善を選ぶ。
+文書同期後の10ファイルを再検証してfreezeし、同じreviewerへ最終read-only reviewを
+依頼する。clear後、helperを含む10ファイルだけをstageし、両hostのrepository
+private-marker scanを再実行してuntracked helperがGit index経由でも検査されたことを
+確認する。global pre-commit guardを通してcommitし、push、PR、CI、self-review、
+merge、post-main確認と安全なbranch/worktree cleanupまで直列に完了する。

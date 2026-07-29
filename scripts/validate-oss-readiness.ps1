@@ -50,7 +50,9 @@ function Assert-FileContains {
         return
     }
 
-    $content = Get-Content -LiteralPath $filePath -Raw
+    # Windows PowerShell 5.1の既定ANSI解釈を避け、BOMなしUTF-8 Markdownも
+    # PowerShell 7と同じcode point列として検証する。
+    $content = [System.IO.File]::ReadAllText($filePath)
     if ($content -notmatch $Pattern) {
         Add-Failure "$RelativePath is missing: $Description"
     }
@@ -70,7 +72,8 @@ function Assert-FilePatternCount {
         return
     }
 
-    $content = Get-Content -LiteralPath $filePath -Raw
+    # pattern countもhost既定encodingへ依存させず、両hostで同じUTF-8本文を数える。
+    $content = [System.IO.File]::ReadAllText($filePath)
     $actualCount = [regex]::Matches($content, $Pattern).Count
     if ($actualCount -ne $ExpectedCount) {
         Add-Failure (
@@ -164,7 +167,7 @@ function Assert-FinalScanDeadlineContract {
 
     # finding payload と clean result のどちらも、emit直前に同じscan-wide時計を
     # 再確認する。途中のdeadline callが存在するだけでは最終窓を閉じられない。
-    $source = Get-Content -LiteralPath $filePath -Raw
+    $source = [System.IO.File]::ReadAllText($filePath)
     $findingWritePattern = (
         '(?m)^[ \t]*\$standardOutput\.Write\(')
     $guardedFindingWritePattern = (
@@ -609,6 +612,261 @@ function Assert-PrivateMarkerMillisecondWaitContract {
     }
 }
 
+function Get-LfNormalizedSha256 {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Text
+    )
+
+    # checkout OSごとの差だけを吸収する。空白、comment、BOM以外のcode pointは
+    # 一切正規化せず、review済みhelperのどの1文字のdriftもdigest差分にする。
+    $normalizedText = $Text.Replace("`r`n", "`n").Replace("`r", "`n")
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $digestBytes = $sha256.ComputeHash($utf8NoBom.GetBytes($normalizedText))
+        return ([System.BitConverter]::ToString($digestBytes)).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+# この値は自動更新しない。helperの実diffをreviewした変更だけが、同じPRで
+# old/new digestを明示してbaselineを更新できる。
+$script:LocalBranchCleanupNormalizedSha256 =
+    '6f1943cc9b8114e2073d7932dd4e0ca862fffe08277f5906987f201adbb7fc3d'
+
+function Test-LocalBranchCleanupContract {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Source
+    )
+
+    # open-world AST deny-listでは未知のPowerShell構文を閉じ切れない。helper全体を
+    # closed-world fingerprintへ固定し、review済みbaseline以外を最初に拒否する。
+    $actualSha256 = Get-LfNormalizedSha256 -Text $Source
+    if ($actualSha256 -cne $script:LocalBranchCleanupNormalizedSha256) {
+        return $false
+    }
+
+    $tokens = $null
+    $parseErrors = $null
+    $sourceAst = [System.Management.Automation.Language.Parser]::ParseInput(
+        $Source,
+        [ref]$tokens,
+        [ref]$parseErrors
+    )
+    if (@($parseErrors).Count -ne 0) {
+        return $false
+    }
+
+    # digest更新時のhuman reviewを助ける高signal anchorだけを残す。全functionは
+    # top-levelに一度ずつ、review済み順序で並び、nested shadowを持たない。
+    $expectedFunctionNames = @(
+        'New-LocalCleanupRuntimeIntegrityGuard',
+        'Set-LocalCleanupProcessEnvironmentValue',
+        'Get-LocalCleanupGitEnvironmentSnapshot',
+        'Clear-LocalCleanupGitEnvironment',
+        'Invoke-LocalCleanupGit',
+        'Test-LocalCleanupTaskSlug',
+        'Get-LocalCleanupLockPath',
+        'New-LocalCleanupLock',
+        'Get-LocalCleanupLockNonce',
+        'Test-LocalCleanupLockOwnership',
+        'Assert-LocalCleanupLockOwnership',
+        'Close-LocalCleanupLock',
+        'Get-LocalBranchConfigState',
+        'Get-LocalCleanupTemporaryConfigState',
+        'Test-LocalBranchCheckedOut',
+        'Get-LocalCleanupWorktreeRecords',
+        'Test-LocalCleanupPathEqual',
+        'New-LocalCleanupConfigWriterLock',
+        'Get-LocalCleanupConfigWriterLockPathNonce',
+        'Test-LocalCleanupConfigWriterLockOwnership',
+        'Assert-LocalCleanupConfigWriterLockOwnership',
+        'Close-LocalCleanupConfigWriterLock',
+        'New-LocalCleanupGuardDescriptor',
+        'Test-LocalCleanupGuardPathState',
+        'Test-LocalCleanupGuardInvariant',
+        'Open-LocalCleanupGuardWorktree',
+        'Close-LocalCleanupGuardWorktree',
+        'Get-LocalBranchOid',
+        'Invoke-LocalBranchCleanupCore',
+        'Remove-IsolatedWorktreeLocalBranch'
+    )
+    $allFunctionDefinitions = @(
+        $sourceAst.FindAll(
+            {
+                param($node)
+                $node -is
+                    [System.Management.Automation.Language.FunctionDefinitionAst]
+            },
+            $true
+        )
+    )
+    $topLevelFunctionDefinitions = @(
+        $sourceAst.EndBlock.Statements | Where-Object {
+            $_ -is [System.Management.Automation.Language.FunctionDefinitionAst]
+        }
+    )
+    if ($allFunctionDefinitions.Count -ne $expectedFunctionNames.Count -or
+        $topLevelFunctionDefinitions.Count -ne $expectedFunctionNames.Count) {
+        return $false
+    }
+    for ($functionIndex = 0;
+        $functionIndex -lt $expectedFunctionNames.Count;
+        $functionIndex++) {
+        if ($allFunctionDefinitions[$functionIndex].Name -cne
+                $expectedFunctionNames[$functionIndex] -or
+            $topLevelFunctionDefinitions[$functionIndex].Name -cne
+                $expectedFunctionNames[$functionIndex]) {
+            return $false
+        }
+    }
+
+    # destructive flowの可読なphase索引は各1件かつexact順序に限定する。
+    $expectedPhaseMarkers = @(
+        '# LOCAL-CAS-PHASE: INPUT-VALIDATION',
+        '# LOCAL-CAS-PHASE: LOCK-ACQUIRE',
+        '# LOCAL-CAS-PHASE: PRECHECK',
+        '# LOCAL-CAS-PHASE: GUARD-ACQUIRE',
+        '# LOCAL-CAS-PHASE: CONFIG-ISOLATION',
+        '# LOCAL-CAS-PHASE: FINAL-PRE-CAS',
+        '# LOCAL-CAS-PHASE: CONFIG-WRITER-LOCK-ACQUIRE',
+        '# LOCAL-CAS-PHASE: CAS-DELETE',
+        '# LOCAL-CAS-PHASE: POST-CAS-CHECK',
+        '# LOCAL-CAS-PHASE: OWNER-CONFIG-CLEANUP',
+        '# LOCAL-CAS-PHASE: FINAL-CHECK',
+        '# LOCAL-CAS-PHASE: CONFIG-WRITER-LOCK-RELEASE',
+        '# LOCAL-CAS-PHASE: GUARD-RELEASE',
+        '# LOCAL-CAS-PHASE: LOCK-RELEASE'
+    )
+    $previousPhaseIndex = -1
+    foreach ($phaseMarker in $expectedPhaseMarkers) {
+        $phaseMatches = [regex]::Matches(
+            $Source,
+            [regex]::Escape($phaseMarker)
+        )
+        $phaseIndex = $Source.IndexOf(
+            $phaseMarker,
+            [System.StringComparison]::Ordinal
+        )
+        if ($phaseMatches.Count -ne 1 -or $phaseIndex -le $previousPhaseIndex) {
+            return $false
+        }
+        $previousPhaseIndex = $phaseIndex
+    }
+
+    # function外のexecution skeletonを型とassignment targetで小さく固定する。
+    # 詳細なoperand/control-flowは全helper digestがclosed-worldで保証する。
+    $topLevelResidualStatements = @(
+        $sourceAst.EndBlock.Statements | Where-Object {
+            -not ($_ -is
+                [System.Management.Automation.Language.FunctionDefinitionAst])
+        }
+    )
+    $expectedResidualTypes = @(
+        'PipelineAst',
+        'AssignmentStatementAst',
+        'AssignmentStatementAst',
+        'IfStatementAst',
+        'AssignmentStatementAst',
+        'AssignmentStatementAst',
+        'AssignmentStatementAst',
+        'AssignmentStatementAst',
+        'AssignmentStatementAst',
+        'PipelineAst',
+        'IfStatementAst'
+    )
+    if ($topLevelResidualStatements.Count -ne $expectedResidualTypes.Count) {
+        return $false
+    }
+    for ($statementIndex = 0;
+        $statementIndex -lt $expectedResidualTypes.Count;
+        $statementIndex++) {
+        if ($topLevelResidualStatements[$statementIndex].GetType().Name -cne
+            $expectedResidualTypes[$statementIndex]) {
+            return $false
+        }
+    }
+    $expectedAssignmentTargets = @{
+        1 = '$ErrorActionPreference'
+        2 = '$script:LocalCleanupGitCommand'
+        4 = '$script:LocalCleanupUtf8NoBom'
+        5 = '$script:LocalCleanupLockFileName'
+        6 = '$script:LocalCleanupConfigWriterLockFileName'
+        7 = '$script:LocalCleanupNullConfigPath'
+        8 = '$script:LocalCleanupRuntimeIntegrityGuard'
+    }
+    foreach ($assignmentIndex in $expectedAssignmentTargets.Keys) {
+        if ($topLevelResidualStatements[$assignmentIndex].Left.Extent.Text -cne
+            $expectedAssignmentTargets[$assignmentIndex]) {
+            return $false
+        }
+    }
+
+    # Gitはapplicationのexact absolute Path、CLIはreview済みfunction providerを使う。
+    $normalizedSource = $Source.Replace("`r`n", "`n").Replace("`r", "`n")
+    $requiredExecutionAnchors = @(
+        (
+            'Microsoft.PowerShell.Core\Get-Command git `' + "`n" +
+                '        -CommandType Application `'
+        ),
+        '& $script:LocalCleanupGitCommand.Path `',
+        '& ${function:New-LocalCleanupRuntimeIntegrityGuard}',
+        '& $script:LocalCleanupRuntimeIntegrityGuard',
+        '$result = & ${function:Remove-IsolatedWorktreeLocalBranch} `'
+    )
+    foreach ($executionAnchor in $requiredExecutionAnchors) {
+        if ([regex]::Matches(
+            $normalizedSource,
+            [regex]::Escape($executionAnchor)
+        ).Count -ne 1) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Assert-LocalBranchCleanupContract {
+    param([string]$RelativePath)
+
+    $filePath = Get-RepoFilePath -RelativePath $RelativePath
+    if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+        Add-Failure "Cannot inspect missing file: $RelativePath (local CAS cleanup contract)"
+        return
+    }
+
+    $source = [System.IO.File]::ReadAllText($filePath)
+    $actualSha256 = Get-LfNormalizedSha256 -Text $source
+    if (-not (Test-LocalBranchCleanupContract -Source $source)) {
+        Add-Failure (
+            '[cleanup/local-cas-contract] Expected the reviewed LF-normalized ' +
+            'closed-world helper fingerprint and semantic anchors. ' +
+            "Expected SHA-256: $script:LocalBranchCleanupNormalizedSha256; " +
+            "actual: $actualSha256. Do not auto-refresh the baseline."
+        )
+        return
+    }
+
+    # self-testはclosed-world境界そのものだけを確認する。1文字driftは拒否し、
+    # CRLF/LF差は同じreview済みsourceとして受理する。
+    $singleCharacterMutation = $source + '#'
+    if (Test-LocalBranchCleanupContract -Source $singleCharacterMutation) {
+        Add-Failure '[cleanup/local-cas-fingerprint-mutation] Expected one-character drift to be rejected.'
+    }
+    $lfSource = $source.Replace("`r`n", "`n").Replace("`r", "`n")
+    $crlfSource = $lfSource.Replace("`n", "`r`n")
+    if ((Get-LfNormalizedSha256 -Text $lfSource) -cne
+            (Get-LfNormalizedSha256 -Text $crlfSource) -or
+        -not (Test-LocalBranchCleanupContract -Source $crlfSource)) {
+        Add-Failure '[cleanup/local-cas-line-ending-normalization] Expected CRLF and LF to share one reviewed digest.'
+    }
+}
 function Get-WorkflowJobLines {
     param(
         [string]$RelativePath,
@@ -1130,7 +1388,7 @@ function Test-SkillFrontmatter {
         return
     }
 
-    $lines = Get-Content -LiteralPath $skillPath
+    $lines = [System.IO.File]::ReadAllLines($skillPath)
     if ($lines.Count -lt 4 -or $lines[0] -ne '---') {
         Add-Failure 'SKILL.md must start with YAML frontmatter.'
         return
@@ -1181,6 +1439,7 @@ $requiredFiles = @(
     'examples/cleanup-guard-cheatsheet.md',
     'examples/concurrent-session-collision-checklist.md',
     'scripts/private-marker-process.ps1',
+    'scripts/remove-local-branch-cas.ps1',
     'scripts/scan-private-markers.ps1',
     'scripts/test-cleanup-guards.ps1',
     'scripts/test-scan-private-markers.ps1',
@@ -1193,6 +1452,7 @@ foreach ($requiredFile in $requiredFiles) {
 
 foreach ($japaneseCommentedScript in @(
     'scripts/private-marker-process.ps1',
+    'scripts/remove-local-branch-cas.ps1',
     'scripts/scan-private-markers.ps1',
     'scripts/test-cleanup-guards.ps1',
     'scripts/test-scan-private-markers.ps1',
@@ -1200,6 +1460,9 @@ foreach ($japaneseCommentedScript in @(
 )) {
     Assert-FileHasUtf8Bom -RelativePath $japaneseCommentedScript
 }
+
+Assert-LocalBranchCleanupContract `
+    -RelativePath 'scripts/remove-local-branch-cas.ps1'
 
 Assert-FileContains -RelativePath 'README.md' -Pattern '(?im)^##\s+Install' -Description 'installation instructions'
 Assert-FileContains -RelativePath 'README.md' -Pattern '(?im)^##\s+Validation' -Description 'validation instructions'
@@ -1286,6 +1549,169 @@ Assert-FileContains `
     -RelativePath 'scripts/test-cleanup-guards.ps1' `
     -Pattern 'Fully qualified remote-tracking target must reject a result absent from the fetched default branch' `
     -Description 'same-name tag collision rejection for the fetched default branch'
+
+# guard 2bと2aのforced fallbackは、観測済みheadRefOidをhelperへ渡す。
+# helperはrepo-common owner lock内でworktree/ref/config/CASを一続きに実行する。
+foreach ($localDeleteContractFile in @(
+    'SKILL.md',
+    'docs/SKILL.ja.md',
+    'examples/cleanup-guard-cheatsheet.md'
+)) {
+    Assert-FileContains `
+        -RelativePath $localDeleteContractFile `
+        -Pattern '\\A\[a-z0-9-\]\+\\z' `
+        -Description 'task slug validation before branch construction'
+    Assert-FileContains `
+        -RelativePath $localDeleteContractFile `
+        -Pattern 'scripts/remove-local-branch-cas\.ps1' `
+        -Description 'canonical local branch CAS cleanup helper'
+    Assert-FileContains `
+        -RelativePath $localDeleteContractFile `
+        -Pattern '(?s)-Repository\s+<repo>.*-TaskSlug\s+<task>.*-ExpectedHeadOid\s+<headRefOid>' `
+        -Description 'expected PR head OID local cleanup invocation'
+    Assert-FileContains `
+        -RelativePath $localDeleteContractFile `
+        -Pattern 'codex-isolated-worktree-cleanup\.lock' `
+        -Description 'repository-common cleanup lock path'
+    Assert-FileContains `
+        -RelativePath $localDeleteContractFile `
+        -Pattern '(?i)nonblocking.*CreateNew|CreateNew.*nonblocking' `
+        -Description 'single-attempt nonblocking lock acquisition'
+    Assert-FileContains `
+        -RelativePath $localDeleteContractFile `
+        -Pattern '(?i)owner nonce' `
+        -Description 'owner nonce lock release boundary'
+    Assert-FileContains `
+        -RelativePath $localDeleteContractFile `
+        -Pattern 'update-ref -d refs/heads/fix/<task> <headRefOid>' `
+        -Description 'fully-qualified expected-OID compare-and-delete'
+    Assert-FileContains `
+        -RelativePath $localDeleteContractFile `
+        -Pattern 'branch\.codex-cleanup-<nonce>' `
+        -Description 'owner-scoped temporary branch config'
+    Assert-FileContains `
+        -RelativePath $localDeleteContractFile `
+        -Pattern '(?i)atomic expected-value' `
+        -Description 'non-atomic config cleanup refusal rationale'
+    Assert-FileContains `
+        -RelativePath $localDeleteContractFile `
+        -Pattern '(?is)refuses\s+CAS|CAS(?:は|を)\s*拒否' `
+        -Description 'config-bearing branch CAS refusal'
+    Assert-FileContains `
+        -RelativePath $localDeleteContractFile `
+        -Pattern '`--no-checkout` guard worktree' `
+        -Description 'Git-native branch occupancy guard'
+    Assert-FileContains `
+        -RelativePath $localDeleteContractFile `
+        -Pattern 'reflog exists refs/heads/fix/<task>' `
+        -Description 'local branch reflog cleanup verification'
+    Assert-FilePatternCount `
+        -RelativePath $localDeleteContractFile `
+        -Pattern 'git -C <repo> branch -D fix/<task>' `
+        -ExpectedCount 0 `
+        -Description 'legacy unconditional local branch deletion commands'
+    Assert-FilePatternCount `
+        -RelativePath $localDeleteContractFile `
+        -Pattern 'git -C <repo> config --local --remove-section branch\.fix/<task>' `
+        -ExpectedCount 0 `
+        -Description 'unsafe direct removal of a potentially recreated config section'
+}
+Assert-FileContains `
+    -RelativePath 'README.md' `
+    -Pattern '(?s)repository-common owner-nonce lock.*expected-OID\s+`update-ref -d` compare-and-delete' `
+    -Description 'expected-OID local cleanup summary'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'An unsafe task slug must be rejected before branch construction' `
+    -Description 'task slug injection rejection fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Native guard acquisition must reject an exact branch checked out elsewhere' `
+    -Description 'checked-out branch native guard rejection fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'A checkout interleaving immediately before guard acquisition must fail closed' `
+    -Description 'atomic guard-acquisition interleaving rejection fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Native guard must block an ordinary competing worktree add' `
+    -Description 'native guard competing add rejection fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Native guard must block an ordinary competing branch switch' `
+    -Description 'native guard competing switch rejection fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Guard cleanup failure must not additionally delete the recreated branch' `
+    -Description 'unexpected guard entry fail-closed preservation fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Local cleanup must restore every ambient GIT variable exactly' `
+    -Description 'ambient Git environment exact restoration fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Snapshot comparer must preserve differently-cased GIT names' `
+    -Description 'case-sensitive ambient Git snapshot fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'foreach \(\$invalidOidLength in @\(41, 63\)\)' `
+    -Description 'intermediate OID lengths rejection fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'A \$invalidOidLength-hex OID must be rejected before repository access' `
+    -Description 'invalid OID length assertion'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Ambient GIT_DIR target must preserve its exact branch tip' `
+    -Description 'ambient Git redirect repository preservation fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'A targeted same-nonce writer must block CAS without losing its payload' `
+    -Description 'same-nonce owner config drift preservation fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Recreated original config must become an explicit recovery conflict' `
+    -Description 'pre-CAS actor config recovery-conflict fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'A branch with owner config must refuse non-atomic automatic cleanup' `
+    -Description 'config-bearing local CAS refusal fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Successful update-ref deletion must remove the local branch reflog' `
+    -Description 'local reflog cleanup assertion'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Rejected local cleanup must preserve the exact second-actor tip' `
+    -Description 'local drift tip preservation assertion'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Rejected configless cleanup must not invent branch config' `
+    -Description 'configless local drift preserves config absence'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Post-CAS branch recreation must not invent branch config' `
+    -Description 'post-CAS same-name branch preserves config absence'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'A second cleanup actor must fail immediately while the lock is held' `
+    -Description 'nonblocking active lock contention fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'An uncertain stale lock must remain untouched' `
+    -Description 'stale lock uncertainty preservation fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'A mismatched owner must not delete the uncertain lock' `
+    -Description 'owner nonce mismatch preservation fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Owner mismatch after config isolation must reject CAS' `
+    -Description 'mid-cleanup owner mismatch CAS rejection fixture'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'External recovery must restore the preserved config to its exact branch' `
+    -Description 'uncertain owner config recovery fixture'
 
 # remote削除contractは全利用例で同じexact expected-OID leaseに固定する。
 # plain deleteやimplicit leaseへ戻ると並行sessionのpost-merge commitを失う。

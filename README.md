@@ -33,10 +33,37 @@ non-obvious parts — which this skill documents from field experience — are:
 - The **cleanup guard depends on the merge mode**: `merge-base --is-ancestor`
   plus `branch -d` works after a merge commit (2a), but after a squash or
   rebase merge the branch is never an ancestor — you need the
-  "MERGED + headRefOid match" guard (2b) and an explicit `-D`.
+  "MERGED + headRefOid match" guard (2b) and an expected-OID
+  `update-ref -d` compare-and-delete.
 - Local cleanup guards fully qualify both `refs/heads/...` and
   `refs/remotes/...` inputs, so same-name tags cannot redirect Git's
   shorthand ref resolution away from the refs being proved.
+- Forced local cleanup runs under a repository-common owner-nonce lock and
+  a nonce-derived Git-native guard worktree, then uses an expected-OID
+  `update-ref -d` compare-and-delete. The guard blocks ordinary competing
+  checkouts through Git's own occupancy rule. Immediately before the final
+  config decision, the helper acquires Git's standard common-directory
+  `config.lock` with a one-shot owner-nonce `CreateNew`, then holds it through
+  config absence, CAS, post-CAS, and final checks. Ordinary Git config writers,
+  pre-existing locks, reparse points, and ownership drift fail closed.
+  Automatic CAS is limited to config-free branches. Existing branch config is
+  isolated and checked in an owner-only temporary section, then the helper
+  refuses CAS because Git config has no atomic expected-value section deletion.
+  The ref, temporary config, guard, and cleanup lock remain attributable for
+  explicit recovery.
+- Every helper Git process clears all ambient `GIT_*` routing before setting
+  isolated config/prompt controls, then restores the caller's exact
+  environment. A fresh CLI process is the supported production boundary. The
+  helper resolves `git` as an application, retains one existing absolute
+  `git`/`git.exe` path, and uses module-qualified critical PowerShell built-ins.
+  A closure captures reviewed helper-function identities, rejects same-name
+  aliases, and rechecks identity after each synchronous test hook. Dot-sourced
+  use and test hooks are trusted harnesses; adversarial asynchronous mutation
+  in the same runspace is outside the cooperative threat model.
+  Guard removal is limited to an exact task-owned path and
+  verified common-directory metadata; unexpected entries preserve the guard
+  and cleanup lock without another branch-deletion attempt. The Git config
+  writer lock is released first and only with exact root/path/nonce proof.
 - Remote branch deletion uses an exact expected-OID `--force-with-lease` in
   every merge mode, so a concurrent post-merge push is rejected atomically
   instead of being deleted.
@@ -176,9 +203,23 @@ worktree を切って PR を作るための手順です。
 - `gh pr checks --watch`（無制限待ち）を避けた bounded CI ポーリング
 - merge 方式別の cleanup ガード: merge commit 方式は `merge-base
   --is-ancestor` + `branch -d`（2a）、squash / rebase 方式は「MERGED +
-  headRefOid 一致」ガード + 明示的 `-D`（2b）
+  headRefOid 一致」ガード + repo-common owner-nonce lock内のexpected-OID付き
+  `update-ref -d` CAS（2b）
 - local cleanup guardの入力は`refs/heads/...`と`refs/remotes/...`へ完全修飾し、
   同名tagによる短縮refの誤解決で検証対象以外を参照しない
+- 強制local cleanupは`scripts/remove-local-branch-cas.ps1`へ集約し、
+  fresh CLI processで実行する。ambient `GIT_*` redirectを遮断してexact復元し、
+  Gitのexisting absolute Application pathを固定し、critical built-inを
+  module-qualifiedで呼ぶ。review済みfunction identityをclosureへ保持し、
+  同名aliasと同期hookによるfunction差替えを拒否する。dot-source/test hookは
+  trusted harnessで、敵対的な同一runspace非同期mutationは保証外とする。
+  nonce由来のGit-native guardで
+  通常checkoutを止める。CAS直前にGit標準common-dir `config.lock`をowner nonce付き
+  `CreateNew`で単発取得し、最終config absence確認からCAS/post/final checkまで保持する。
+  自動CASはconfigなしbranchだけに限定し、config付きbranchは
+  owner sectionへ隔離・exact照合した後、atomic expected-value config削除が無いため
+  CAS前に拒否する。ref drift、CAS後の同名branch再作成、最終config presence、
+  guard metadata/entry drift、lock・回復所有不確実をfail closedで拒否する
 - remote branch 削除は全方式でexact expected-OID付き
   `--force-with-lease`を使い、merge後の並行pushをatomicに削除拒否
 - 破壊操作の前に全チェックを実行時点で通す安全条件と、並行セッション衝突の
@@ -219,8 +260,18 @@ worktree を切って PR を作るための手順です。
   [PR #5](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/5):
   `MERGED`, a rewritten landed `mergeCommit`, original head outside the
   default-branch ancestry, unchanged local and remote tips matching
-  `headRefOid`, guarded local `-D`, explicit remote deletion, and owned
-  worktree cleanup all passed while the main checkout stayed unchanged.
+  `headRefOid`, the then-current guarded local deletion, explicit remote
+  deletion, and owned worktree cleanup all passed while the main checkout
+  stayed unchanged. The expected-OID config-free local CAS,
+  checked-out-worktree gate, checkout/ref interleavings, config-bearing
+  pre-CAS refusal, standard config-writer exclusion, configless-to-config
+  racing refusal, same-nonce config-writer preservation, post-CAS same-name
+  branch recreation, config-lock drift/reparse handling, and
+  active/stale/nonce-mismatched cleanup-lock handling are verified
+  only with disposable local fixtures; live GitHub local-CAS use is not
+  checked. The repository cleanup lock is cooperative rather than a Git-wide
+  mutex, so direct Git plumbing by a non-cooperating actor remains outside its
+  guarantee.
 - Whether recursive deletion follows directory junctions or symlinks varies
   by platform, tool, and version (unverified); the skill's rule is to remove
   links explicitly instead of relying on that behavior.
@@ -229,8 +280,9 @@ worktree を切って PR を作るための手順です。
 
 ## Non-Goals
 
-- No automation scripts that run the flow for you. This repository is a
-  written discipline with copy-adaptable commands, not a tool.
+- No single automation script runs the end-to-end PR flow. The checked-in
+  local CAS helper automates only the destructive local-branch boundary whose
+  lock, config ownership, and interleaving checks must remain consistent.
 - No general git worktree tutorial; the focus is the dirty-checkout /
   shared-checkout PR case and its cleanup hazards.
 
@@ -264,16 +316,42 @@ pwsh -NoProfile -File ./scripts/scan-private-markers.ps1
 ```
 
 The cleanup-guard regression test builds disposable local Git histories for
-merge, squash, and rebase topology. It verifies the positive 2a/2b decisions
-and the two 2b rejection paths without using GitHub, credentials, or a real
-repository. Each Git invocation ignores system/global configuration, signing,
-hooks, and `rebase.updateRefs`; it snapshots and clears every ambient `GIT_*`
-variable before setting only its isolated config and non-interactive prompt
-policy. This prevents repository/index/object redirection and trace output to
-caller-selected paths, including future Git variables not yet known to the
-test. Recursive cleanup requires an OS-aware, direct GUID-named child of the
-temporary directory and rejects reparse points. CI executes the test with
-both PowerShell 7 and Windows PowerShell 5.1.
+merge, squash, and rebase topology. It verifies the positive 2a/2b decisions,
+the two 2b rejection paths, native guard acquisition against an existing or
+interleaved checkout, ordinary add/switch blocking while the guard is held,
+  successful config-free local ref/reflog cleanup, config-bearing pre-CAS
+  refusal, pre-CAS ref drift, targeted same-nonce config drift, standard
+  config-writer blocking, configless-to-config race refusal, pre-existing,
+   reparse, descriptor-drift, and content-drift config locks, post-CAS same-name
+	   branch recreation, ambient alias/function replacement refusal, exact guard cleanup refusal on unexpected entries,
+  ambient Git redirect isolation, active/stale/owner-mismatched cleanup locks,
+observation-to-rename config drift, explicit pre-CAS owner-config recovery
+conflict, task-slug/OID trailing-LF rejection, and remote expected-OID lease
+behavior without using GitHub, credentials, or a real repository. The
+	   current fixture exposes 211 assertions under both
+PowerShell 7 and Windows PowerShell 5.1. Each Git invocation ignores
+system/global configuration, signing, hooks, and
+`rebase.updateRefs`; it snapshots and clears every ambient `GIT_*` variable
+before setting only its isolated config and non-interactive prompt policy.
+Ordinal snapshot keys keep differently-cased variable names distinct on
+case-sensitive hosts. This prevents repository/index/object redirection and
+trace output to caller-selected paths, including future Git variables not yet
+known to the test. Recursive cleanup requires an OS-aware, direct GUID-named
+child of the temporary directory and rejects reparse points.
+
+Readiness validation treats `scripts/remove-local-branch-cas.ps1` as a
+closed-world reviewed artifact. It normalizes only CRLF or lone CR to LF,
+computes SHA-256 over UTF-8 without BOM, and rejects every other code, comment,
+or whitespace change. Small semantic anchors still require parse success, the
+exact ordered 30 top-level functions, one ordered set of destructive phase
+markers, the top-level execution skeleton, an application-only Git path, and
+the reviewed CLI entrypoint. Its self-test proves one-character drift is
+rejected and CRLF/LF checkouts share the same digest. Never auto-refresh the
+baseline: inspect the helper diff and record the old/new digest in the same
+reviewed change.
+Text-contract reads use explicit .NET UTF-8 decoding rather than the
+Windows PowerShell 5.1 ANSI default, so no-BOM Markdown and scripts receive
+the same readiness decision under both supported Windows hosts.
 
 The private-marker self-test also retains the PowerShell host that starts it,
 so the `powershell` and `pwsh` commands above are distinct compatibility
