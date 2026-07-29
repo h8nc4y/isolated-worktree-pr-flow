@@ -86,6 +86,10 @@ PowerShell 7 job を含みます。3 job は
 2. `origin` の default branch から一時 worktree を作成する（dirty checkout には
    触らない）。`<default>` は手順 1 で取得した値を代入する。`main` 固定にしない —
    default が `master` のリポジトリは今も普通に存在する。
+   branch名やworktree pathを組み立てる前に、`<task>`が`\A[a-z0-9-]+\z`へ一致する
+   ことを必須にする。
+   空文字、英大文字、slash、空白、regex metacharacterは、refや後続のconfig queryへ
+   埋め込まず拒否する。
 
    ```powershell
    git -C <repo> worktree add -b fix/<task> ..\_worktrees\<task> origin/<default>
@@ -240,8 +244,8 @@ PowerShell 7 job を含みます。3 job は
      HEAD」基準のため、remote branch 削除 + prune の後で、かつ checkout の HEAD が
      古い別ブランチに載っていると、正しく merge 済みでも `not fully merged` で
      拒否されることがある（実測）。この場合は、直前の `--is-ancestor` が exit 0
-     だったことを確認済みであることを条件に `-D` で削除してよい — 2b と同じ
-     「guard 確認後の `-D`」の型であり、guard 未実施の `-D` は引き続き不可。
+     だったことを確認済みであることを条件に、下記のexpected-OID付きlocal削除を
+     使う。無条件の `-D` は引き続き不可。
    - **2b — `--squash` / `--rebase` 方式**:
      `gh pr view <PR番号> --repo <owner>/<name> --json state,mergeCommit` で
      `state` / `mergeCommit` を取得し、merge前に保持した `headRefOid` を使う。
@@ -253,7 +257,7 @@ PowerShell 7 job を含みます。3 job は
      が exit 0、(ii) `git -C <repo> rev-parse refs/heads/fix/<task>` が
      `headRefOid` と一致。(ii) が squash 方式における「commit の取りこぼしなし」
      の代替検証で、merge された PR の head が local branch の先端そのものである
-     ことを証明する。両方通ったときのみ、意図的な `git branch -D` で削除する
+     ことを証明する。両方通ったときのみ、下記のexpected-OID付きlocal削除を使う
      （この guard が `-d` の代替）。両guardのnamed operandを完全修飾する。
      local branchは`refs/heads/fix/<task>`、fetch済みdefault branchは
      `refs/remotes/origin/<default>`を使う。同名の`fix/<task>`または
@@ -267,13 +271,117 @@ PowerShell 7 job を含みます。3 job は
      reparse point を拒否する。GitHub の live squash 経路は 2026-07-23 に
      [PR #2](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/2) で実測し、
      `MERGED`、default branch に入った `mergeCommit`、local / remote の先端と
-     `headRefOid` の一致、guard 後の local `-D` と明示的な remote 削除が全て通った。
+     `headRefOid` の一致、当時のguard付きlocal削除、明示的なremote削除が全て通った。
      GitHub の live rebase 経路は 2026-07-26 に
      [PR #5](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/5) で実測し、
      `MERGED`、書き換えられて default branch に入った `mergeCommit`、元 head が
      default branch の ancestor ではないこと、local / remote の先端と
-     `headRefOid` の一致、guard 後の local `-D`、明示的な remote 削除、owned
-     worktree cleanup が全て通り、main checkout も不変だった。
+     `headRefOid` の一致、当時のguard付きlocal削除、明示的なremote削除、owned
+     worktree cleanup が全て通り、main checkout も不変だった。expected-OID付き
+     local削除とdrift拒否はdisposable fixtureで検証し、実GitHubでのlocal CASは
+     未確認。
+
+   guard 2bと、guard 2aで`branch -d`が誤って拒否した場合の強制削除では、
+   `branch -D`や手書きの`update-ref`、config削除手順を使わない。
+   このflowのworktreeを先にremoveし、`<task>`が`\A[a-z0-9-]+\z`へ一致することを
+   確認してから、repo、task slug、merge前のexact PR headを
+   `scripts/remove-local-branch-cas.ps1`へ渡す。
+
+   ```powershell
+   pwsh -NoProfile -File ./scripts/remove-local-branch-cas.ps1 `
+     -Repository <repo> `
+     -TaskSlug <task> `
+     -ExpectedHeadOid <headRefOid>
+   ```
+
+   Windows PowerShell 5.1では、同じhelperを`powershell -NoProfile
+   -ExecutionPolicy Bypass -File`で実行できる。
+   POSIX hostでは、上記の`pwsh` commandへ対象repoのpathを渡す。
+
+   helperはGit common directoryの`codex-isolated-worktree-cleanup.lock`を使うため、
+   linked worktree間でcleanup lockを共有する。
+   lock取得はnonblockingな`CreateNew`を一度だけ試す。
+   ownerはrandomなowner nonceを書き込み、各破壊phaseの前と`finally`でnonceを
+   再確認してからlockを解放する。
+   active lock、所有者を確定できないstale lock、owner nonce不一致ではbranchを
+   保持し、helperはlockを推測削除しない。
+
+   最後のpre-CAS外部hook後に、helperはGit標準のcommon-directory `config.lock`を
+   owner nonce付き`CreateNew`で一度だけ取得する。exact common root、
+   `config.lock` leaf、regularかつnon-reparseなpath、owner handle nonce、live path
+   nonceを照合する。既存lockは待機も削除も行わない。このwriter exclusionを
+   original configの最終照会、configless CAS、post-CAS、final checkまで保持するため、
+   通常の`git config` writerはその間失敗する。取得または解放の所有証明が不確実なら、
+   config lock、native guard、cleanup lockをexternal recovery用に残す。
+
+   Git child processを呼ぶたびに、helperはambientな`GIT_*`を全てsnapshotして
+   消去する。その後、global/system configの隔離とnon-interactive promptに必要な
+   安全値だけを設定し、`finally`で元の存在と値をexactに復元する。snapshotは
+   ordinal keyを使い、Linux / macOSでcaseだけが異なる名前も別entryとして保持する。
+   `GIT_DIR`、`GIT_WORK_TREE`、`GIT_COMMON_DIR`、object directory、将来追加される
+   Git routing変数で`-Repository`を別checkoutへ向けることはできない。
+   production利用はfresh CLI processに限定する。helperは`git`をapplicationとして
+   解決し、存在する絶対pathの`git` / `git.exe`を1件保持する。criticalな
+   PowerShell built-inはmodule-qualifiedで呼ぶ。closureへreview済みhelper function
+   identityを保持し、同名aliasを拒否し、同期test hook後にidentityを再検査する。
+   dot-sourceとtest hookはtrusted harnessであり、同一runspace内の敵対的な非同期
+   mutationは協調protocolの保証外とする。
+
+   helperはowner lock保持中に、nonceから導出したtask-owned pathへ、short branch
+   `fix/<task>`の`--no-checkout` guard worktreeを作る。
+   short branchを使うのはGit native branch occupancyを取得する時だけである。
+   作成直後に、exact pathとfully-qualifiedな`refs/heads/fix/<task>`を結ぶ
+   porcelain recordが1件だけであること、同refの別recordが無いこと、regularな
+   `.git` markerがexpected common-directory metadataを指すことを確認する。
+   guard保持中、通常の`worktree add`と`switch`はGit自身が拒否する。
+
+   その後、`refs/heads/fix/<task>`が`headRefOid`と一致することを再確認する。
+   自動CASはbranch configが無いbranchだけを対象にする。元のbranch configがある
+   場合は、owner専用の`branch.codex-cleanup-<nonce>` sectionへ移し、rename直後と
+   Git config writer lock保持中のCAS直前にexact snapshotを照合する。その後もCASは
+   拒否する。Git configには、
+   queryとmutationの間に同nonce writerが書いた新payloadを消さずにsectionを
+   削除するatomic expected-value operationが無いためである。ref、temporary
+   config、native guard、cleanup lockはexternal recovery用に保持する。
+   rename-backも、同時再作成された新stateをmergeまたは上書きし得るため、
+   helperは自動実行しない。
+
+   configなしbranchでは、内部で
+   `update-ref -d refs/heads/fix/<task> <headRefOid>`を実行する。nonzeroの場合は
+   前進したtipとreflogを保持する。writer lock内の最終照会により、
+   configlessからconfigありへ変わるraceもCAS前に拒否する。CAS成功後はexact refの
+   不存在を確認し、
+   `reflog exists refs/heads/fix/<task>`へ不存在を要求する。新しいbranch configが
+   再作成されていれば拒否し、解放前に最終ref、guard、configを確認する。
+   temporary sectionを自動削除する経路は持たない。
+   guard cleanupは通常の`git worktree remove`を先に試す。
+   `--no-checkout` guardは意図的にdirtyになり得るため、CAS outcomeが既知の場合、
+   またはCAS前拒否でbranchが`headRefOid`のままの場合に限り、
+   owner lock、sole porcelain binding、common-directory marker、non-reparse root、
+   `.git`だけのentry setを全て再確認できた場合に限り、exact pathへの
+   `--force`を一度だけ許可する。
+   予期しないentryやmetadata driftではguardとcleanup lockを残し、fallbackの
+   branch削除は行わない。
+
+   config付きbranchの拒否では、primaryのCAS拒否とautomatic rename-back拒否を
+   両方報告し、attributableなtemporary config、owner guard、lockを外部回復用に
+   残す。別actorがoriginal branch configを再作成した場合や、同nonceでowner
+   temporary payloadを書き換えた場合も、いずれのpayloadも削除しない。
+   disposable local fixtureはPowerShell 7とWindows PowerShell 5.1で各211
+   assertionsを持つ。checkout中branch、guard取得直前のcheckout差込み、
+   通常add/switchの拒否、CAS直前drift、CAS後の同名branch再作成、
+   ambient alias / function差替え拒否、
+   予期しないguard entry、ambient Git redirect、active/stale lock、
+   owner nonce不一致、config付きbranchのCAS拒否、同nonce config writer、標準
+   config writerの排他、configless→config race、既存/reparse/path差替え/content
+   driftしたconfig lock、config観測→rename drift、CAS前のowner回復競合を検証する。
+
+   owner lockはrepo cleanupの協調protocolであり、temporary guardは通常checkoutへ
+   Git native occupancyを追加する。
+   協調する全sessionは、local強制cleanupで同じhelperを使う必要がある。
+   direct Git plumbingでprotocolを迂回するactorはlockの対象外である。
+   helperの再確認とfail-closed fixtureは検証対象のinterleavingを制限するが、
+   任意の迂回操作までは停止できない。
 
 3. 消す対象の worktree / branch が「このフローで自分が作った」ものであること —
    他エージェントや人間のものは消さない。
@@ -308,7 +416,14 @@ PowerShell 7 job を含みます。3 job は
 ```powershell
 git -C <repo> worktree remove ..\_worktrees\<task>
 git -C <repo> worktree prune
-git -C <repo> branch -d fix/<task>          # 2a（--merge）方式。not fully merged 拒否なら 2a の注意（is-ancestor 確認後の -D）。2b 方式は guard 確認済みの場合のみ -D
+git -C <repo> branch -d fix/<task>          # 2aの通常経路だけ。下記CAS経路と重ねて実行しない
+
+# guard 2b、またはguard 2aで検証済みのnot-fully-merged誤拒否が出た場合:
+pwsh -NoProfile -File ./scripts/remove-local-branch-cas.ps1 `
+  -Repository <repo> `
+  -TaskSlug <task> `
+  -ExpectedHeadOid <headRefOid>
+
 git -C <repo> push --force-with-lease=refs/heads/fix/<task>:<headRefOid> origin :refs/heads/fix/<task>   # exact remote refだけ。既に無ければskip
 git -C <repo> remote prune origin
 ```
@@ -317,10 +432,15 @@ git -C <repo> remote prune origin
 
 削除まわりのトラブルシュート:
 
-- cleanup の順序が重要: branch 削除の前に worktree を remove する。いずれかの
-  worktree で checkout 中の branch は、`-d` / `-D` のどちらでも `used by
-  worktree` で削除拒否される — これは git の防御が正しく機能している状態であり、
-  `not fully merged` とは別種の拒否（実測）。
+- cleanup の順序が重要: branch 削除の前に worktree を remove する。porcelainの
+  `branch -d`は、いずれかのworktreeでcheckout中なら`used by worktree`で拒否する
+  （実測）。
+  helperはplumbing CASをこの保護の代替とみなさず、repo-common lock保持中に
+  `worktree list --porcelain`のexact branch recordを繰り返し確認する。
+- helperがcleanup lockの取得不能または所有不確実を報告した場合は、branchを保持して
+  lock所有者をflow外で確認する。
+  古く見えるという理由だけでlockを削除しない。
+  経過時間はowner不在の証明にならない。
 - `git worktree remove` が未追跡物ありで拒否されたら、安易に `--force` へ
   逃げない。実際に何が残っているか — 外し忘れのリンク・ビルド生成物・退避し
   忘れの成果物 — を確認し、個別に対処してから再実行する。

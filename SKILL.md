@@ -105,6 +105,10 @@ semantics — have POSIX symlink equivalents noted inline.
 2. Create a temporary worktree from `origin`'s default branch, without
    touching the dirty checkout. Substitute `<default>` from step 1 — do not
    hardcode `main`; repositories whose default is `master` are still common.
+   Before constructing either the branch name or worktree path, require
+   `<task>` to match `\A[a-z0-9-]+\z`. Reject an empty value, uppercase letters,
+   slashes, whitespace, and regex metacharacters rather than interpolating
+   them into a ref or later config query.
 
    ```powershell
    git -C <repo> worktree add -b fix/<task> ..\_worktrees\<task> origin/<default>
@@ -271,9 +275,9 @@ passed, re-run the checks immediately before executing (field-tested).
      so after the remote branch is deleted and pruned, and with the
      checkout's HEAD sitting on an older, unrelated branch, `-d` can refuse
      with `not fully merged` even though the PR merged correctly
-     (field-tested). In that case deleting with `-D` is acceptable only
-     immediately after the `--is-ancestor` check exited 0 — the same
-     guard-then-`-D` shape as 2b; a `-D` without the guard stays forbidden.
+     (field-tested). In that case use the expected-OID local deletion sequence
+     below only after the `--is-ancestor` check exited 0; a blind `-D` stays
+     forbidden.
    - **2b — `--squash` / `--rebase` mode**: fetch `state` and `mergeCommit`
      via `gh pr view <pr-number> --repo <owner>/<name> --json state,mergeCommit`,
      and use the `headRefOid` retained before merge.
@@ -284,8 +288,8 @@ passed, re-run the checks immediately before executing (field-tested).
      exits 0, and (ii) `git -C <repo> rev-parse refs/heads/fix/<task>` equals
      `headRefOid`. Check (ii) is the squash-mode replacement for "no commits
      left behind": it proves the merged PR head is exactly your local branch
-     tip. Only when both hold, delete with an explicit `git branch -D` (this
-     guard substitutes for `-d`). Fully qualify both named operands:
+     tip. Only when both hold, use the expected-OID local deletion sequence
+     below (the guard substitutes for `-d`). Fully qualify both named operands:
      `refs/heads/fix/<task>` for the local branch and
      `refs/remotes/origin/<default>` for the fetched default branch. Tags
      named `fix/<task>` or `origin/<default>` otherwise make Git's shorthand
@@ -301,13 +305,130 @@ passed, re-run the checks immediately before executing (field-tested).
      squash path was measured on 2026-07-23 with
      [PR #2](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/2):
      `MERGED`, landed `mergeCommit`, unchanged local and remote tips matching
-     `headRefOid`, guarded local `-D`, and explicit remote deletion all passed.
+     `headRefOid`, the then-current guarded local deletion, and explicit remote
+     deletion all passed.
      The live GitHub rebase path was measured on 2026-07-26 with
      [PR #5](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/5):
      `MERGED`, a rewritten landed `mergeCommit`, the original head outside the
      default-branch ancestry, unchanged local and remote tips matching
-     `headRefOid`, guarded local `-D`, explicit remote deletion, and owned
-     worktree cleanup all passed while the main checkout stayed unchanged.
+     `headRefOid`, the then-current guarded local deletion, explicit remote
+     deletion, and owned worktree cleanup all passed while the main checkout
+     stayed unchanged. Expected-OID local deletion and drift rejection are
+     covered by the disposable fixture; live GitHub local-CAS use is
+     unverified.
+
+   For guard 2b, and for guard 2a's forced-delete fallback, never run
+   `branch -D` or a hand-written `update-ref` / config-removal sequence.
+   Remove this flow's worktree first, require `<task>` to match
+   `\A[a-z0-9-]+\z`, and invoke `scripts/remove-local-branch-cas.ps1` with the
+   repository, task slug, and exact pre-merge PR head:
+
+   ```powershell
+   pwsh -NoProfile -File ./scripts/remove-local-branch-cas.ps1 `
+     -Repository <repo> `
+     -TaskSlug <task> `
+     -ExpectedHeadOid <headRefOid>
+   ```
+
+   Windows PowerShell 5.1 can run the same helper with `powershell -NoProfile
+   -ExecutionPolicy Bypass -File`. POSIX hosts use the shown `pwsh` command
+   with their repository path.
+
+   The helper places `codex-isolated-worktree-cleanup.lock` in Git's common
+   directory, so linked worktrees share one cleanup lock. Acquisition is one
+   nonblocking `CreateNew` attempt. The owner writes a random owner nonce,
+   verifies that nonce before every destructive phase, and verifies it again
+   in `finally` before releasing the lock. An active lock, a stale lock whose
+   ownership is uncertain, or an owner nonce mismatch preserves the branch;
+   the helper never guesses that such a lock is safe to remove.
+
+   After the last external pre-CAS hook, the helper acquires Git's standard
+   common-directory `config.lock` with one owner-nonce `CreateNew` attempt.
+   It validates the exact common root, `config.lock` leaf, regular non-reparse
+   path, owner handle nonce, and live path nonce. A pre-existing lock is never
+   waited on or deleted. The helper holds this writer exclusion across the
+   final original-config query, configless CAS, post-CAS checks, and final
+   checks. Ordinary `git config` writers therefore fail while this interval is
+   active. Acquisition or release uncertainty preserves the config lock,
+   native guard, and cleanup lock for explicit recovery.
+
+   Every Git child process snapshots and clears all ambient `GIT_*` variables,
+   sets only isolated global/system-config and non-interactive prompt controls,
+   and restores the caller's exact environment in `finally`. The snapshot uses
+   ordinal keys so differently-cased names remain distinct on Linux and macOS.
+   `GIT_DIR`,
+   `GIT_WORK_TREE`, `GIT_COMMON_DIR`, object-directory variables, and future
+   Git routing variables therefore cannot redirect `-Repository` to another
+   checkout.
+   Production use is limited to a fresh CLI process. The helper resolves `git`
+   as an application, retains one existing absolute `git`/`git.exe` path, and
+   module-qualifies critical PowerShell built-ins. A closure captures the
+   reviewed helper-function identities, rejects same-name aliases, and
+   rechecks identity after each synchronous test hook. Dot-sourced use and
+   test hooks are trusted harnesses; adversarial asynchronous mutation in the
+   same runspace is outside the cooperative threat model.
+
+   While holding the owner lock, the helper creates a nonce-derived
+   `--no-checkout` guard worktree for short branch `fix/<task>`. The short name
+   is used only to acquire Git's native branch occupancy. The helper
+   immediately requires one porcelain record binding the exact task-owned path
+   to fully qualified `refs/heads/fix/<task>`, no second record for that ref,
+   and a regular `.git` marker pointing to the expected common-directory
+   worktree metadata. Ordinary `worktree add` and `switch` calls are then
+   rejected by Git while the guard is held.
+
+   The helper rechecks that `refs/heads/fix/<task>` still equals `headRefOid`.
+   Automatic compare-and-delete is limited to a branch with no existing branch
+   config. If config exists, the helper moves it to the owner-only
+   `branch.codex-cleanup-<nonce>` section and compares the exact snapshot
+   immediately after that rename and again under the Git config writer lock
+   before CAS. It then
+   refuses CAS: Git config has no atomic expected-value operation that can
+   delete the verified section without deleting a same-nonce writer's newer
+   payload between query and mutation. The ref, temporary config, native guard,
+   and cleanup lock are preserved for explicit recovery. The helper does not
+   rename the temporary config back automatically, because a concurrent
+   recreation can make rename-back merge or overwrite newer state.
+
+   For a config-free branch, the helper performs the internal compare-and-delete
+   `update-ref -d refs/heads/fix/<task> <headRefOid>`. A nonzero exit preserves
+   the advanced tip and reflog. The writer lock's final query also rejects a
+   configless-to-config race before CAS. After a successful CAS, it verifies ref absence,
+   requires `reflog exists refs/heads/fix/<task>` to report absence, rejects any
+   newly recreated branch config, and performs final ref/guard/config checks
+   before release. There is no automatic temporary-section removal path. Guard
+   cleanup first tries normal `git worktree remove`.
+   Because a `--no-checkout` guard can be intentionally dirty, one exact-path
+   `--force` retry is permitted after a known CAS outcome, or after a pre-CAS
+   refusal only when the branch still equals `headRefOid`. In both cases the
+   owner lock, sole porcelain binding, common-directory marker, non-reparse
+   root, and `.git`-only entry set are all revalidated. Unexpected entries or
+   metadata drift preserve the guard and cleanup lock; no fallback branch
+   deletion follows.
+
+   A config-bearing refusal reports both the primary CAS refusal and the
+   deliberate automatic rename-back refusal, then preserves the attributable
+   temporary config, owner guard, and lock for explicit recovery. If another
+   actor recreates the original branch config, or changes the owner temporary
+   payload with the same nonce, the helper preserves all attributable state
+   without deleting either payload. A disposable local
+   fixture exposes 211 assertions on PowerShell 7
+   and Windows PowerShell 5.1, including existing and interleaved checkout
+   rejection, ordinary add/switch blocking, ref drift, post-CAS same-name
+   recreation, unexpected guard entries, ambient Git redirection, active/stale
+   cleanup locks, owner mismatch, config-bearing CAS refusal, targeted
+   same-nonce config drift, standard config-writer blocking, ambient
+   alias/function replacement refusal,
+   configless-to-config races, pre-existing/reparse/replaced/content-drift
+   config locks, observation-to-rename config drift, and pre-CAS recovery
+   conflict.
+
+   The owner lock is a repository cleanup protocol, while the temporary guard
+   adds Git's native occupancy for ordinary checkout operations. Every
+   cooperating session must still use the helper for forced local cleanup.
+   An arbitrary actor that bypasses both with direct Git plumbing
+   remains outside the lock; the helper's repeated checks and fail-closed
+   fixtures limit the modeled interleavings but cannot stop such an actor.
 
 3. The worktree and branch being deleted are ones this flow created — never
    another agent's or a human's.
@@ -350,7 +471,14 @@ Only after all checks pass:
 ```powershell
 git -C <repo> worktree remove ..\_worktrees\<task>
 git -C <repo> worktree prune
-git -C <repo> branch -d fix/<task>          # 2a (--merge) mode; on a not-fully-merged refusal apply the 2a caveat (verified is-ancestor, then -D); 2b mode uses -D only after its guard
+git -C <repo> branch -d fix/<task>          # 2a normal path only; do not also run the CAS path below
+
+# Guard 2b, or guard 2a after a verified not-fully-merged false refusal:
+pwsh -NoProfile -File ./scripts/remove-local-branch-cas.ps1 `
+  -Repository <repo> `
+  -TaskSlug <task> `
+  -ExpectedHeadOid <headRefOid>
+
 git -C <repo> push --force-with-lease=refs/heads/fix/<task>:<headRefOid> origin :refs/heads/fix/<task>   # exact remote ref only; already absent means skip
 git -C <repo> remote prune origin
 ```
@@ -360,9 +488,14 @@ git -C <repo> remote prune origin
 Troubleshooting removal:
 
 - The cleanup order matters: remove the worktree before deleting the branch.
-  A branch still checked out in any worktree is refused deletion by both
-  `-d` and `-D` with `used by worktree` — that is git's protection working,
-  and it is a different refusal than `not fully merged` (field-tested).
+  Porcelain `branch -d` refuses a branch still checked out in any worktree
+  with `used by worktree` (field-tested). The helper does not treat plumbing
+  CAS as a substitute for that protection: it checks the exact
+  `worktree list --porcelain` branch record repeatedly while holding the
+  repository-common lock.
+- If the helper reports an unavailable or uncertain cleanup lock, preserve the
+  branch and inspect ownership outside this flow. Do not delete a lock merely
+  because it looks old; age does not prove that no owner remains.
 - If `git worktree remove` refuses because of untracked content, do not
   reach for `--force`. Identify what is actually there — a leftover link, a
   build artifact, a deliverable you forgot to move out — and handle each

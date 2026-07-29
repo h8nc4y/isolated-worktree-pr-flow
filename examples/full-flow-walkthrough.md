@@ -21,6 +21,10 @@ gh repo view <owner>/<name> --json defaultBranchRef -q .defaultBranchRef.name
 
 ## 1. Cut the worktree from origin's default branch
 
+Before constructing the branch or worktree path, require `<task>` to match
+`\A[a-z0-9-]+\z`. Reject any other value instead of interpolating it into a ref,
+path, or later branch-config query.
+
 POSIX:
 
 ```bash
@@ -121,6 +125,24 @@ git -C <repo> branch -d fix/<task>
 git -C <repo> push --force-with-lease=refs/heads/fix/<task>:<headRefOid> origin :refs/heads/fix/<task>
 git -C <repo> remote prune origin
 ```
+
+For squash/rebase guard 2b, or a verified guard 2a false refusal, replace the
+`branch -d` line with `scripts/remove-local-branch-cas.ps1`; never add a blind
+`branch -D`. Run the helper in a fresh CLI process. It clears ambient Git
+routing, pins one existing absolute Git application path, module-qualifies
+critical PowerShell built-ins, rejects same-name helper aliases or synchronous
+function replacement, holds a nonce-derived Git-native guard worktree across
+the expected-OID decision, and removes only an exactly verified task-owned
+guard path. Dot-source/test hooks are trusted; adversarial asynchronous
+same-runspace mutation is outside the cooperative protocol. Automatic CAS is
+limited to config-free
+branches. If owner config exists, the helper isolates and compares it, then
+refuses CAS because Git config has no atomic expected-value section deletion.
+After the final pre-CAS hook, it holds Git's standard common-directory
+`config.lock` across the final config query, CAS, post-CAS checks, and final
+checks, excluding ordinary config writers. It never guesses a rename-back or
+temporary-section removal. The temporary config, ref, guard, and cleanup lock
+remain for explicit recovery without another branch-deletion attempt.
 
 If the remote branch disappeared before cleanup, skip the push. If another
 session advanced it after the `ls-remote` observation, the exact expected-OID
