@@ -364,16 +364,78 @@ try {
     # is the positive path for guard 2a before a normal branch -d.
     $mergeRepository = Join-Path $testRoot 'merge'
     Initialize-FixtureRepository -Path $mergeRepository
+    $mergeBaseOid = (Invoke-Git -Repository $mergeRepository `
+        -Arguments @('rev-parse', 'refs/heads/main')).Output
     Invoke-Git -Repository $mergeRepository -Arguments @('switch', '-c', 'fix/merge') | Out-Null
     Add-Commit -Repository $mergeRepository -RelativePath 'feature.txt' -Content "merge`n" -Message 'feature'
+    $mergeHeadRefOid = (Invoke-Git -Repository $mergeRepository `
+        -Arguments @('rev-parse', 'refs/heads/fix/merge')).Output
     Invoke-Git -Repository $mergeRepository -Arguments @('switch', 'main') | Out-Null
-    Invoke-Git -Repository $mergeRepository -Arguments @('merge', '--no-ff', 'fix/merge', '-m', 'merge result') | Out-Null
+    Invoke-Git -Repository $mergeRepository `
+        -Arguments @('merge', '--no-ff', 'refs/heads/fix/merge', '-m', 'merge result') | Out-Null
+    Invoke-Git -Repository $mergeRepository `
+        -Arguments @('update-ref', 'refs/remotes/origin/main', 'refs/heads/main') | Out-Null
 
     $mergeBranchAncestor = Invoke-Git -Repository $mergeRepository `
-        -Arguments @('merge-base', '--is-ancestor', 'fix/merge', 'main') `
+        -Arguments @(
+            'merge-base',
+            '--is-ancestor',
+            'refs/heads/fix/merge',
+            'refs/remotes/origin/main'
+        ) `
         -AllowedExitCodes @(0, 1)
     Assert-ExitCode -Result $mergeBranchAncestor -Expected 0 `
         -Message 'Guard 2a must accept a branch landed by merge commit'
+
+    # 同名tagが短縮refを奪うと、進んだbranchではなくmerge済みtagを検証して
+    # guard 2aがfalse-passする。fully-qualified branch refだけを安全条件に使う。
+    Invoke-Git -Repository $mergeRepository -Arguments @('switch', 'fix/merge') | Out-Null
+    Add-Commit -Repository $mergeRepository -RelativePath 'late.txt' `
+        -Content "late`n" -Message 'late merge-mode commit'
+    Invoke-Git -Repository $mergeRepository `
+        -Arguments @('tag', 'fix/merge', $mergeHeadRefOid) | Out-Null
+    $ambiguousMergeBranchAncestor = Invoke-Git -Repository $mergeRepository `
+        -Arguments @(
+            'merge-base',
+            '--is-ancestor',
+            'fix/merge',
+            'refs/remotes/origin/main'
+        ) `
+        -AllowedExitCodes @(0, 1)
+    Assert-ExitCode -Result $ambiguousMergeBranchAncestor -Expected 0 `
+        -Message 'A same-name tag must demonstrate why shorthand guard 2a is ambiguous'
+    $qualifiedMergeBranchAncestor = Invoke-Git -Repository $mergeRepository `
+        -Arguments @(
+            'merge-base',
+            '--is-ancestor',
+            'refs/heads/fix/merge',
+            'refs/remotes/origin/main'
+        ) `
+        -AllowedExitCodes @(0, 1)
+    Assert-ExitCode -Result $qualifiedMergeBranchAncestor -Expected 1 `
+        -Message 'Fully qualified guard 2a must reject the advanced branch instead of accepting the same-name tag'
+
+    # target側のorigin/mainもDWIM短縮refであり、同名tagがremote-tracking refより
+    # 先に解決される。未反映remoteを隠すfalse-passをfully-qualified targetで拒否する。
+    Invoke-Git -Repository $mergeRepository `
+        -Arguments @('tag', 'origin/main', 'refs/heads/main') | Out-Null
+    Invoke-Git -Repository $mergeRepository `
+        -Arguments @('update-ref', 'refs/remotes/origin/main', $mergeBaseOid) | Out-Null
+    $ambiguousRemoteTargetAncestor = Invoke-Git -Repository $mergeRepository `
+        -Arguments @('merge-base', '--is-ancestor', $mergeHeadRefOid, 'origin/main') `
+        -AllowedExitCodes @(0, 1)
+    Assert-ExitCode -Result $ambiguousRemoteTargetAncestor -Expected 0 `
+        -Message 'A same-name tag must demonstrate why shorthand remote-tracking targets are ambiguous'
+    $qualifiedRemoteTargetAncestor = Invoke-Git -Repository $mergeRepository `
+        -Arguments @(
+            'merge-base',
+            '--is-ancestor',
+            $mergeHeadRefOid,
+            'refs/remotes/origin/main'
+        ) `
+        -AllowedExitCodes @(0, 1)
+    Assert-ExitCode -Result $qualifiedRemoteTargetAncestor -Expected 1 `
+        -Message 'Fully qualified remote-tracking target must reject a result absent from the fetched default branch'
 
     # Squash does not make the source commits ancestors of main. Guard 2b's
     # two checks jointly prove the landed result and the unchanged local tip.
@@ -382,26 +444,42 @@ try {
     Invoke-Git -Repository $squashRepository -Arguments @('switch', '-c', 'fix/squash') | Out-Null
     Add-Commit -Repository $squashRepository -RelativePath 'feature-a.txt' -Content "a`n" -Message 'feature a'
     Add-Commit -Repository $squashRepository -RelativePath 'feature-b.txt' -Content "b`n" -Message 'feature b'
-    $squashHeadRefOid = (Invoke-Git -Repository $squashRepository -Arguments @('rev-parse', 'fix/squash')).Output
+    $squashHeadRefOid = (Invoke-Git -Repository $squashRepository `
+        -Arguments @('rev-parse', 'refs/heads/fix/squash')).Output
 
     Invoke-Git -Repository $squashRepository -Arguments @('switch', 'main') | Out-Null
-    Invoke-Git -Repository $squashRepository -Arguments @('merge', '--squash', 'fix/squash') | Out-Null
+    Invoke-Git -Repository $squashRepository `
+        -Arguments @('merge', '--squash', 'refs/heads/fix/squash') | Out-Null
     Invoke-Git -Repository $squashRepository -Arguments @('commit', '-m', 'squash result') | Out-Null
-    $squashMergeCommitOid = (Invoke-Git -Repository $squashRepository -Arguments @('rev-parse', 'main')).Output
+    Invoke-Git -Repository $squashRepository `
+        -Arguments @('update-ref', 'refs/remotes/origin/main', 'refs/heads/main') | Out-Null
+    $squashMergeCommitOid = (Invoke-Git -Repository $squashRepository `
+        -Arguments @('rev-parse', 'refs/heads/main')).Output
 
     $squashBranchAncestor = Invoke-Git -Repository $squashRepository `
-        -Arguments @('merge-base', '--is-ancestor', 'fix/squash', 'main') `
+        -Arguments @(
+            'merge-base',
+            '--is-ancestor',
+            'refs/heads/fix/squash',
+            'refs/remotes/origin/main'
+        ) `
         -AllowedExitCodes @(0, 1)
     Assert-ExitCode -Result $squashBranchAncestor -Expected 1 `
         -Message 'Guard 2a must reject a correctly squashed branch'
 
     $squashResultAncestor = Invoke-Git -Repository $squashRepository `
-        -Arguments @('merge-base', '--is-ancestor', $squashMergeCommitOid, 'main') `
+        -Arguments @(
+            'merge-base',
+            '--is-ancestor',
+            $squashMergeCommitOid,
+            'refs/remotes/origin/main'
+        ) `
         -AllowedExitCodes @(0, 1)
     Assert-ExitCode -Result $squashResultAncestor -Expected 0 `
         -Message 'Guard 2b must accept a landed squash result'
 
-    $squashLocalTip = (Invoke-Git -Repository $squashRepository -Arguments @('rev-parse', 'fix/squash')).Output
+    $squashLocalTip = (Invoke-Git -Repository $squashRepository `
+        -Arguments @('rev-parse', 'refs/heads/fix/squash')).Output
     Assert-Equal -Actual $squashLocalTip -Expected $squashHeadRefOid `
         -Message 'Guard 2b must accept an unchanged local PR branch'
 
@@ -410,7 +488,12 @@ try {
     $unrelatedCommitOid = (Invoke-Git -Repository $squashRepository `
         -Arguments @('commit-tree', $squashTreeOid, '-m', 'unrelated result')).Output
     $unrelatedResultAncestor = Invoke-Git -Repository $squashRepository `
-        -Arguments @('merge-base', '--is-ancestor', $unrelatedCommitOid, 'main') `
+        -Arguments @(
+            'merge-base',
+            '--is-ancestor',
+            $unrelatedCommitOid,
+            'refs/remotes/origin/main'
+        ) `
         -AllowedExitCodes @(0, 1)
     Assert-ExitCode -Result $unrelatedResultAncestor -Expected 1 `
         -Message 'Guard 2b must reject a merge result outside the default branch'
@@ -418,9 +501,20 @@ try {
     # The headRefOid comparison must catch a local commit added after merge.
     Invoke-Git -Repository $squashRepository -Arguments @('switch', 'fix/squash') | Out-Null
     Add-Commit -Repository $squashRepository -RelativePath 'late.txt' -Content "late`n" -Message 'late local commit'
-    $advancedLocalTip = (Invoke-Git -Repository $squashRepository -Arguments @('rev-parse', 'fix/squash')).Output
+    Invoke-Git -Repository $squashRepository `
+        -Arguments @('tag', 'fix/squash', $squashHeadRefOid) | Out-Null
+    $ambiguousSquashTip = Invoke-Git -Repository $squashRepository `
+        -Arguments @('rev-parse', 'fix/squash')
+    $ambiguousSquashOidLines = @(
+        $ambiguousSquashTip.Output -split "`n" |
+            Where-Object { $_ -cmatch '^[0-9a-f]{40,64}$' }
+    )
+    Assert-Equal -Actual ($ambiguousSquashOidLines -join "`n") -Expected $squashHeadRefOid `
+        -Message 'Shorthand guard 2b rev-parse must demonstrate why a same-name tag is unsafe'
+    $advancedLocalTip = (Invoke-Git -Repository $squashRepository `
+        -Arguments @('rev-parse', 'refs/heads/fix/squash')).Output
     Assert-NotEqual -Actual $advancedLocalTip -Expected $squashHeadRefOid `
-        -Message 'Guard 2b must reject local commits added after the merged PR head'
+        -Message 'Fully qualified guard 2b must inspect the advanced branch instead of the same-name tag'
 
     # Rebase merge rewrites commit IDs. Preserve the original PR branch while
     # rebasing a copy, then fast-forward main to synthesize GitHub's topology.
@@ -429,16 +523,20 @@ try {
     Invoke-Git -Repository $rebaseRepository -Arguments @('switch', '-c', 'fix/rebase') | Out-Null
     Add-Commit -Repository $rebaseRepository -RelativePath 'feature-a.txt' -Content "a`n" -Message 'feature a'
     Add-Commit -Repository $rebaseRepository -RelativePath 'feature-b.txt' -Content "b`n" -Message 'feature b'
-    $rebaseHeadRefOid = (Invoke-Git -Repository $rebaseRepository -Arguments @('rev-parse', 'fix/rebase')).Output
+    $rebaseHeadRefOid = (Invoke-Git -Repository $rebaseRepository `
+        -Arguments @('rev-parse', 'refs/heads/fix/rebase')).Output
 
     Invoke-Git -Repository $rebaseRepository -Arguments @('switch', 'main') | Out-Null
     Add-Commit -Repository $rebaseRepository -RelativePath 'base-next.txt' -Content "next`n" -Message 'advance base'
-    Invoke-Git -Repository $rebaseRepository -Arguments @('branch', 'rebased-result', 'fix/rebase') | Out-Null
+    Invoke-Git -Repository $rebaseRepository `
+        -Arguments @('branch', 'rebased-result', 'refs/heads/fix/rebase') | Out-Null
     Invoke-Git -Repository $rebaseRepository -Arguments @('switch', 'rebased-result') | Out-Null
     Invoke-Git -Repository $rebaseRepository -Arguments @('rebase', 'main') | Out-Null
     $rebaseMergeCommitOid = (Invoke-Git -Repository $rebaseRepository -Arguments @('rev-parse', 'rebased-result')).Output
     Invoke-Git -Repository $rebaseRepository -Arguments @('switch', 'main') | Out-Null
     Invoke-Git -Repository $rebaseRepository -Arguments @('merge', '--ff-only', 'rebased-result') | Out-Null
+    Invoke-Git -Repository $rebaseRepository `
+        -Arguments @('update-ref', 'refs/remotes/origin/main', 'refs/heads/main') | Out-Null
 
     # Fail at the rewritten-history premise itself so later topology checks
     # cannot be the only signal that the synthetic rebase actually rewrote it.
@@ -446,18 +544,29 @@ try {
         -Message 'The landed rebase commit must differ from the original PR head'
 
     $rebaseBranchAncestor = Invoke-Git -Repository $rebaseRepository `
-        -Arguments @('merge-base', '--is-ancestor', 'fix/rebase', 'main') `
+        -Arguments @(
+            'merge-base',
+            '--is-ancestor',
+            'refs/heads/fix/rebase',
+            'refs/remotes/origin/main'
+        ) `
         -AllowedExitCodes @(0, 1)
     Assert-ExitCode -Result $rebaseBranchAncestor -Expected 1 `
         -Message 'Guard 2a must reject a correctly rebased branch with rewritten commits'
 
     $rebaseResultAncestor = Invoke-Git -Repository $rebaseRepository `
-        -Arguments @('merge-base', '--is-ancestor', $rebaseMergeCommitOid, 'main') `
+        -Arguments @(
+            'merge-base',
+            '--is-ancestor',
+            $rebaseMergeCommitOid,
+            'refs/remotes/origin/main'
+        ) `
         -AllowedExitCodes @(0, 1)
     Assert-ExitCode -Result $rebaseResultAncestor -Expected 0 `
         -Message 'Guard 2b must accept the landed rebase result'
 
-    $rebaseLocalTip = (Invoke-Git -Repository $rebaseRepository -Arguments @('rev-parse', 'fix/rebase')).Output
+    $rebaseLocalTip = (Invoke-Git -Repository $rebaseRepository `
+        -Arguments @('rev-parse', 'refs/heads/fix/rebase')).Output
     Assert-Equal -Actual $rebaseLocalTip -Expected $rebaseHeadRefOid `
         -Message 'Guard 2b must accept the unchanged original PR head after rebase merge'
 

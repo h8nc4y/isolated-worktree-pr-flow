@@ -1220,6 +1220,73 @@ Assert-FileContains -RelativePath 'CONTRIBUTING.md' -Pattern '(?im)no token|neve
 Assert-FileContains -RelativePath 'SECURITY.md' -Pattern '(?im)do not.*public|private|security' -Description 'private vulnerability reporting guidance'
 Assert-FileContains -RelativePath 'SECURITY.md' -Pattern '(?i)fail(?:s|ed)? closed' -Description 'fail-closed scanner boundary'
 
+# cleanup guardのnamed operandは、同名tagが存在しても検証対象以外へ解決されない
+# fully-qualified refに固定する。短縮refへ戻ると未マージbranchを誤削除し得る。
+foreach ($cleanupGuardDocument in @(
+    'SKILL.md',
+    'docs/SKILL.ja.md',
+    'examples/cleanup-guard-cheatsheet.md'
+)) {
+    Assert-FileContains `
+        -RelativePath $cleanupGuardDocument `
+        -Pattern 'merge-base --is-ancestor refs/heads/fix/<task> refs/remotes/origin/<default>' `
+        -Description 'fully-qualified guard 2a local and remote-tracking refs'
+    Assert-FileContains `
+        -RelativePath $cleanupGuardDocument `
+        -Pattern 'merge-base --is-ancestor <mergeCommit-oid> refs/remotes/origin/<default>' `
+        -Description 'fully-qualified guard 2b remote-tracking ref'
+    Assert-FileContains `
+        -RelativePath $cleanupGuardDocument `
+        -Pattern 'rev-parse refs/heads/fix/<task>' `
+        -Description 'fully-qualified guard 2b local branch ref'
+}
+Assert-FileContains `
+    -RelativePath 'examples/full-flow-walkthrough.md' `
+    -Pattern 'merge-base --is-ancestor refs/heads/fix/<task> refs/remotes/origin/main' `
+    -Description 'fully-qualified walkthrough guard 2a local and remote-tracking refs'
+foreach ($cleanupGuardDocument in @(
+    'SKILL.md',
+    'docs/SKILL.ja.md',
+    'examples/cleanup-guard-cheatsheet.md',
+    'examples/full-flow-walkthrough.md'
+)) {
+    Assert-FilePatternCount `
+        -RelativePath $cleanupGuardDocument `
+        -Pattern 'merge-base --is-ancestor fix/<task>' `
+        -ExpectedCount 0 `
+        -Description 'ambiguous shorthand guard 2a refs'
+    Assert-FilePatternCount `
+        -RelativePath $cleanupGuardDocument `
+        -Pattern 'rev-parse fix/<task>' `
+        -ExpectedCount 0 `
+        -Description 'ambiguous shorthand guard 2b refs'
+    Assert-FilePatternCount `
+        -RelativePath $cleanupGuardDocument `
+        -Pattern 'merge-base --is-ancestor [^\r\n`]* origin/(?:<default>|main)' `
+        -ExpectedCount 0 `
+        -Description 'ambiguous shorthand remote-tracking guard refs'
+}
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'A same-name tag must demonstrate why shorthand guard 2a is ambiguous' `
+    -Description 'same-name tag collision premise for guard 2a'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Fully qualified guard 2b must inspect the advanced branch instead of the same-name tag' `
+    -Description 'same-name tag collision rejection for guard 2b'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Shorthand guard 2b rev-parse must demonstrate why a same-name tag is unsafe' `
+    -Description 'direct shorthand rev-parse collision premise for guard 2b'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'A same-name tag must demonstrate why shorthand remote-tracking targets are ambiguous' `
+    -Description 'same-name tag collision premise for the fetched default branch'
+Assert-FileContains `
+    -RelativePath 'scripts/test-cleanup-guards.ps1' `
+    -Pattern 'Fully qualified remote-tracking target must reject a result absent from the fetched default branch' `
+    -Description 'same-name tag collision rejection for the fetched default branch'
+
 # remote削除contractは全利用例で同じexact expected-OID leaseに固定する。
 # plain deleteやimplicit leaseへ戻ると並行sessionのpost-merge commitを失う。
 $remoteDeleteCommand = 'git -C <repo> push --force-with-lease=refs/heads/fix/<task>:<headRefOid> origin :refs/heads/fix/<task>'

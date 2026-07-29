@@ -23,6 +23,12 @@ The format loosely follows Keep a Changelog conventions.
 
 ### Changed
 
+- Fully qualified cleanup-guard inputs as `refs/heads/fix/<task>` and
+  `refs/remotes/origin/<default>`. Same-name tags can otherwise win Git's
+  ambiguous shorthand ref resolution, letting guard 2a or 2b inspect a
+  misleading tag while the branch being deleted or fetched default branch
+  does not satisfy the safety condition. Disposable fixtures reproduce both
+  collisions and prove the qualified refs reject them.
 - Replaced unconditional remote branch deletion with an exact expected-OID
   `--force-with-lease` for every merge mode, using the PR head retained
   immediately before merge. An already absent branch is skipped, while any

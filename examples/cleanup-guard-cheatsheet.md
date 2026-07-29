@@ -20,7 +20,7 @@ gh pr view <pr-number> --repo <owner>/<name> --json headRefOid -q .headRefOid
 
 ```bash
 git -C <repo> fetch origin
-git -C <repo> merge-base --is-ancestor fix/<task> origin/<default>; echo $?
+git -C <repo> merge-base --is-ancestor refs/heads/fix/<task> refs/remotes/origin/<default>; echo $?
 # require exit 0, then:
 git -C <repo> branch -d fix/<task>
 ```
@@ -42,10 +42,10 @@ gh pr view <pr-number> --repo <owner>/<name> --json state,mergeCommit
 
 # (i) the squash/rebase result landed on the default branch
 git -C <repo> fetch origin
-git -C <repo> merge-base --is-ancestor <mergeCommit-oid> origin/<default>; echo $?   # require 0
+git -C <repo> merge-base --is-ancestor <mergeCommit-oid> refs/remotes/origin/<default>; echo $?   # require 0
 
 # (ii) the merged PR head is exactly your local branch tip (no commits left behind)
-git -C <repo> rev-parse fix/<task>    # require: equals headRefOid
+git -C <repo> rev-parse refs/heads/fix/<task>    # require: equals headRefOid
 
 # both hold → delete with explicit -D (the guard substitutes for -d)
 git -C <repo> branch -D fix/<task>
@@ -65,6 +65,11 @@ When it matches, delete with an explicit expected-value lease:
 ```bash
 git -C <repo> push --force-with-lease=refs/heads/fix/<task>:<headRefOid> origin :refs/heads/fix/<task>
 ```
+
+The local guard commands fully qualify both `refs/heads/fix/<task>` and
+`refs/remotes/origin/<default>`. Same-name tags would make the shorthand
+`fix/<task>` or `origin/<default>` ambiguous and could make Git inspect a tag
+instead of the branch or fetched remote-tracking ref being proved.
 
 The server checks the expected OID atomically. If another session advances
 the remote ref after `ls-remote`, deletion is rejected and its commit remains.
@@ -94,7 +99,7 @@ cleanup all passed while the main checkout stayed unchanged.
 
 ## What goes wrong when you mix them
 
-- **2a after a squash**: `merge-base --is-ancestor fix/<task>` exits 1
+- **2a after a squash**: `merge-base --is-ancestor refs/heads/fix/<task>` exits 1
   forever, even for a perfectly merged PR — the squash commit is a different
   object. You end up "unable to confirm" a merge that actually happened.
 - **`branch -d` after a squash, upstream still exists**: git's
