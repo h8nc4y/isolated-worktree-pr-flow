@@ -4,14 +4,22 @@
 
 ## Current state
 
-- local cleanup guard 2a / 2bのnamed operandを`refs/heads/fix/<task>`と
-  `refs/remotes/origin/<default>`へ完全修飾した。同名tagが短縮ref解決を奪い、
-  削除対象branchまたはfetch済みdefault branch以外を検証するfalse-passを、
-  使い捨てmerge / squash fixtureで再現して拒否する。
-- 同じtreeのlocal検証では、cleanup guardsがPowerShell 7 / Windows PowerShell
-  5.1で各28 assertions、readiness、両hostのscanner self-testとrepository
-  private-marker scan、Gitleaks、whitespaceが成功した。Semgrep固定ruleの対象となる
-  Python / JavaScript / TypeScript source変更は無い。
+- [PR #16](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/16) で、
+  cleanup guard 2a / 2bのnamed operandを`refs/heads/fix/<task>`と
+  `refs/remotes/origin/<default>`へ完全修飾した。feature commitは
+  `950c92dcfb44e7b1c819d29ff0771a1951b56615`、merge commitは
+  `8f7ef9bc0e5e8922e0c03d7a710a13df1e0a2212`で、両treeは一致する。
+- 同名tagが短縮ref解決を奪い、削除対象branchまたはfetch済みdefault branch以外を
+  検証するfalse-passを、使い捨てmerge / squash fixtureで再現して拒否する。
+  独立reviewはP0-P3なしでclear。
+- PR CI [run 30422704494](https://github.com/h8nc4y/isolated-worktree-pr-flow/actions/runs/30422704494)
+  はWindows、Ubuntu 24.04、native macOS 15の全job・全stepが成功した。
+- merge後のremote cleanupでは、保持した`headRefOid`とexact remote 1 recordの
+  一致を再確認し、expected-value leaseで削除成功、再照会exit 2を確認した。
+- 同じmerge treeのlocal post-main再検証では、cleanup guardsがPowerShell 7 /
+  Windows PowerShell 5.1で各28 assertions、readinessとrepository private-marker
+  scanが両host、Gitleaks、whitespaceが成功した。merge前の同treeでは両hostの
+  scanner self-testも成功し、Semgrep固定ruleの対象source変更は無い。
 - [PR #14](https://github.com/h8nc4y/isolated-worktree-pr-flow/pull/14) で、
   merge後のremote branch削除を `headRefOid` のexact expected-value leaseへ
   変更した。feature commitは
