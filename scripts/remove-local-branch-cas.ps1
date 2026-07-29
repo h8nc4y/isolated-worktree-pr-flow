@@ -93,12 +93,22 @@ function New-LocalCleanupRuntimeIntegrityGuard {
     }
 
     $integrityGuardBody = {
+        param(
+            [Parameter(Mandatory = $true)]
+            [scriptblock]$CommandResolver
+        )
+
         foreach ($protectedFunctionName in $protectedFunctionNames) {
-            if ($null -ne (
-                Microsoft.PowerShell.Utility\Get-Alias `
-                    -Name $protectedFunctionName `
-                    -ErrorAction SilentlyContinue
-            )) {
+            $currentAlias = $null
+            try {
+                $currentAlias = & $CommandResolver `
+                    $protectedFunctionName `
+                    ([System.Management.Automation.CommandTypes]::Alias)
+            }
+            catch {
+                # alias不存在は正常系。function identityは続けて必ず検査する。
+            }
+            if ($null -ne $currentAlias) {
                 throw (
                     "Ambient alias '$protectedFunctionName' can redirect the " +
                     'local cleanup helper; remove the alias before retrying.'
@@ -107,10 +117,9 @@ function New-LocalCleanupRuntimeIntegrityGuard {
 
             $currentFunction = $null
             try {
-                $currentFunction = Microsoft.PowerShell.Core\Get-Command `
-                    -Name $protectedFunctionName `
-                    -CommandType Function `
-                    -ErrorAction Stop
+                $currentFunction = & $CommandResolver `
+                    $protectedFunctionName `
+                    ([System.Management.Automation.CommandTypes]::Function)
             }
             catch {
                 throw "Runtime function '$protectedFunctionName' is unavailable."
@@ -1221,7 +1230,19 @@ function Invoke-LocalBranchCleanupCore {
     # closure referenceをhook前にlocalへ固定し、同期hookがscript variableを差し替えても
     # alias/function integrityの再検査を迂回させない。
     $runtimeIntegrityGuard = $script:LocalCleanupRuntimeIntegrityGuard
-    & $runtimeIntegrityGuard
+    # GetNewClosureのdynamic moduleではcallerのchild script scopeが見えない。
+    # reviewed literal resolverをcaller側で作り、Actions temp wrapperでも同じscopeを解決する。
+    $runtimeCommandResolver = {
+        param(
+            [string]$CommandName,
+            [System.Management.Automation.CommandTypes]$CommandType
+        )
+        Microsoft.PowerShell.Core\Get-Command `
+            -Name $CommandName `
+            -CommandType $CommandType `
+            -ErrorAction Stop
+    }
+    & $runtimeIntegrityGuard $runtimeCommandResolver
 
     if (-not (Test-LocalCleanupTaskSlug -Value $TaskSlug)) {
         throw 'Task slug must contain only lowercase ASCII letters, digits, and hyphens.'
@@ -1277,7 +1298,7 @@ function Invoke-LocalBranchCleanupCore {
         if ($null -ne $AfterWorktreeGateForTest) {
             & $AfterWorktreeGateForTest $lock $guard
         }
-        & $runtimeIntegrityGuard
+        & $runtimeIntegrityGuard $runtimeCommandResolver
 
         Assert-LocalCleanupLockOwnership -Lock $lock
         $observedOid = Get-LocalBranchOid `
@@ -1320,7 +1341,7 @@ function Invoke-LocalBranchCleanupCore {
             if ($null -ne $BeforeConfigRenameForTest) {
                 & $BeforeConfigRenameForTest
             }
-            & $runtimeIntegrityGuard
+            & $runtimeIntegrityGuard $runtimeCommandResolver
             Invoke-LocalCleanupGit `
                 -RepositoryPath $resolvedRepository `
                 -Arguments @(
@@ -1378,7 +1399,7 @@ function Invoke-LocalBranchCleanupCore {
         if ($null -ne $BeforeCasForTest) {
             & $BeforeCasForTest $lock $guard
         }
-        & $runtimeIntegrityGuard
+        & $runtimeIntegrityGuard $runtimeCommandResolver
 
         # test hookを含む最後の外部処理後にもowner/native guardを再確認する。
         # nonceやoccupancyが変わった状態でCASへ進まない。
@@ -1409,7 +1430,7 @@ function Invoke-LocalBranchCleanupCore {
         if ($null -ne $AfterConfigWriterLockForTest) {
             & $AfterConfigWriterLockForTest $configWriterLock $guard
         }
-        & $runtimeIntegrityGuard
+        & $runtimeIntegrityGuard $runtimeCommandResolver
         Assert-LocalCleanupConfigWriterLockOwnership `
             -Lock $configWriterLock `
             -ExpectedPath $configWriterLockPath `
@@ -1476,7 +1497,7 @@ function Invoke-LocalBranchCleanupCore {
         if ($null -ne $AfterCasForTest) {
             & $AfterCasForTest $guard
         }
-        & $runtimeIntegrityGuard
+        & $runtimeIntegrityGuard $runtimeCommandResolver
 
         # LOCAL-CAS-PHASE: POST-CAS-CHECK
         Assert-LocalCleanupConfigWriterLockOwnership `
@@ -1723,7 +1744,17 @@ function Remove-IsolatedWorktreeLocalBranch {
 
     # public entrypointはtest hookを公開せず、実行直前のreviewed function identityを検査する。
     $runtimeIntegrityGuard = $script:LocalCleanupRuntimeIntegrityGuard
-    & $runtimeIntegrityGuard
+    $runtimeCommandResolver = {
+        param(
+            [string]$CommandName,
+            [System.Management.Automation.CommandTypes]$CommandType
+        )
+        Microsoft.PowerShell.Core\Get-Command `
+            -Name $CommandName `
+            -CommandType $CommandType `
+            -ErrorAction Stop
+    }
+    & $runtimeIntegrityGuard $runtimeCommandResolver
     return Invoke-LocalBranchCleanupCore `
         -RepositoryPath $RepositoryPath `
         -TaskSlug $TaskSlug `
@@ -1732,7 +1763,16 @@ function Remove-IsolatedWorktreeLocalBranch {
 
 $script:LocalCleanupRuntimeIntegrityGuard =
     & ${function:New-LocalCleanupRuntimeIntegrityGuard}
-& $script:LocalCleanupRuntimeIntegrityGuard
+& $script:LocalCleanupRuntimeIntegrityGuard {
+    param(
+        [string]$CommandName,
+        [System.Management.Automation.CommandTypes]$CommandType
+    )
+    Microsoft.PowerShell.Core\Get-Command `
+        -Name $CommandName `
+        -CommandType $CommandType `
+        -ErrorAction Stop
+}
 
 if ($MyInvocation.InvocationName -ne '.') {
     $result = & ${function:Remove-IsolatedWorktreeLocalBranch} `

@@ -48,9 +48,11 @@ The format loosely follows Keep a Changelog conventions.
    application and retained by one existing absolute `git`/`git.exe` path;
    critical PowerShell built-ins are module-qualified. A closure retains
    reviewed helper-function identities, rejects same-name aliases, and
-   rechecks identity after synchronous test hooks. Dot-sourced/test-hook
-   execution is trusted, and adversarial asynchronous same-runspace mutation
-   is outside the cooperative threat model.
+   rechecks identity after synchronous test hooks. A module-qualified resolver
+   is created in each caller scope so an Actions temporary wrapper's child
+   script scope remains visible to the closure. Dot-sourced/test-hook execution
+   is trusted, and adversarial asynchronous same-runspace mutation is outside
+   the cooperative threat model.
   Exact task-owned path, sole fully-qualified branch record, expected
   common-directory marker, and `.git`-only non-reparse state remain gated
    through expected-OID

@@ -57,9 +57,12 @@ non-obvious parts — which this skill documents from field experience — are:
   helper resolves `git` as an application, retains one existing absolute
   `git`/`git.exe` path, and uses module-qualified critical PowerShell built-ins.
   A closure captures reviewed helper-function identities, rejects same-name
-  aliases, and rechecks identity after each synchronous test hook. Dot-sourced
-  use and test hooks are trusted harnesses; adversarial asynchronous mutation
-  in the same runspace is outside the cooperative threat model.
+  aliases, and rechecks identity after each synchronous test hook. Each check
+  receives a module-qualified resolver created in the caller scope, so helper
+  functions remain visible when a CI wrapper invokes the script through a child
+  script scope. Dot-sourced use and test hooks are trusted harnesses;
+  adversarial asynchronous mutation in the same runspace is outside the
+  cooperative threat model.
   Guard removal is limited to an exact task-owned path and
   verified common-directory metadata; unexpected entries preserve the guard
   and cleanup lock without another branch-deletion attempt. The Git config

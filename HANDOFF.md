@@ -15,8 +15,10 @@
   productionはfresh CLI processを保証境界とする。GitをApplicationとして解決し、
   PATH先頭のexisting absolute `git` / `git.exe` pathを保持する。critical built-inは
   module-qualifiedで呼ぶ。closureへreview済みfunction identityを保持し、同名aliasと
-  同期hookによるfunction差替えを次のcritical call前に拒否する。dot-source/test hookは
-  trusted harnessであり、敵対的な同一runspace非同期mutationは保証外とする。
+  同期hookによるfunction差替えを次のcritical call前に拒否する。各caller scopeで
+  module-qualified resolverを生成してclosureへ渡すため、CI wrapperのchild script
+  scopeでもfunction identityを解決できる。dot-source/test hookはtrusted harnessであり、
+  敵対的な同一runspace非同期mutationは保証外とする。
 - disposable local fixtureはPowerShell 7 / Windows PowerShell 5.1で各211
   assertionsを持つ。
   既存・interleaved checkout、通常add/switchのguard拒否、config観測→rename
@@ -41,10 +43,12 @@
   top-level 30 functions、phase順、top-level execution skeleton、Application Git path、
   CLI entryだけをsmall semantic anchorとして残す。baselineは自動更新せずhelper diffと
   old/new digestを同じreviewで確認する。
-  直前freezeの独立reviewはclearした。実行したreadinessでsemantic anchorと
-  Windows PowerShell 5.1のUTF-8 no-BOM読取りを修正したため、最終freeze reviewは未確認。
-- 現WIPのcleanup guardsとreadinessはPowerShell 7 / 5.1で成功し、
-  cleanup guardsは各211 assertionsを確認した。正規logical slot内で両hostの
+  直前freezeの独立reviewはclearした。PR #18の初回3 CIは、Actions temp wrapperが
+  test scriptを通常callするchild scopeからclosureがfunctionを解決できず失敗した。
+  同じscopeをlocalで再現し、caller-scope resolverで修正した。helper-only reviewはclearし、
+  normalized baselineを`cd9238e...d8972`へ更新した。最終freeze reviewは未確認。
+- resolver修正後のcleanup guardsはnested/directのPowerShell 7 / 5.1で各211
+  assertions成功。正規logical slot内で両hostの
   private-marker self-testとrepository scanも成功した。Gitleaksはcustom global-hook
   configによるworktree/history scanが成功し、Semgrep固定ruleの対象source変更は0件。
   fresh child processのCLI smokeは、fixture/processを作る前にexecution policyで拒否された。
@@ -282,8 +286,7 @@
 
 ## Next step
 
-文書同期後の10ファイルを再検証してfreezeし、同じreviewerへ最終read-only reviewを
-依頼する。clear後、helperを含む10ファイルだけをstageし、両hostのrepository
-private-marker scanを再実行してuntracked helperがGit index経由でも検査されたことを
-確認する。global pre-commit guardを通してcommitし、push、PR、CI、self-review、
+resolver fix、fingerprint baseline、文書を再検証してfreezeし、同じreviewerへ
+最終read-only reviewを依頼する。clear後は修正5ファイルだけをstageし、global
+pre-commit guardを通して追加commit/pushする。PR #18のCI再実行、self-review、
 merge、post-main確認と安全なbranch/worktree cleanupまで直列に完了する。
