@@ -332,6 +332,125 @@ function Test-PathTextEqual {
     return $Left.Equals($Right, $Comparison)
 }
 
+function Remove-ExactGuardFixtureDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedParent
+    )
+
+    # 回帰fixtureが削除できるのは、明示したtemp親直下の一意なguard leafだけにする。
+    # broad path、reparse leaf、想定外名はテスト都合でも再帰削除へ渡さない。
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    $resolvedExpectedParent = [System.IO.Path]::GetFullPath($ExpectedParent)
+    if (-not (Test-PathTextEqual `
+        -Left ([System.IO.Path]::GetDirectoryName($resolvedPath)) `
+        -Right $resolvedExpectedParent `
+        -Comparison $pathComparison
+    )) {
+        throw 'Fixture guard path escaped its explicit temporary parent.'
+    }
+    if (
+        [System.IO.Path]::GetFileName($resolvedPath) -cnotmatch
+            '\Acodex-isolated-worktree-cleanup-guard-[0-9a-f]{32}\z'
+    ) {
+        throw 'Fixture guard leaf did not match the unique cleanup nonce shape.'
+    }
+    if (-not [System.IO.Directory]::Exists($resolvedPath)) {
+        throw 'Fixture guard directory was absent before exact removal.'
+    }
+    $attributes = [System.IO.File]::GetAttributes($resolvedPath)
+    if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Fixture guard leaf became a reparse point; refusing recursive removal.'
+    }
+
+    [System.IO.Directory]::Delete($resolvedPath, $true)
+}
+
+function Open-ExactRetainedCleanupLockForFixture {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedCommonDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedNonce
+    )
+
+    # 外部回復fixtureでもproductionの所有権境界を緩めない。common-dir直下の
+    # fixed leafと32桁owner nonceを満たすregular fileだけを単発reopenする。
+    if ($ExpectedNonce -cnotmatch '\A[0-9a-f]{32}\z') {
+        throw 'Retained fixture lock nonce must be exactly 32 lowercase hex characters.'
+    }
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    $resolvedCommonDirectory = [System.IO.Path]::GetFullPath(
+        $ExpectedCommonDirectory
+    )
+    if (-not (Test-PathTextEqual `
+        -Left ([System.IO.Path]::GetDirectoryName($resolvedPath)) `
+        -Right $resolvedCommonDirectory `
+        -Comparison $pathComparison
+    )) {
+        throw 'Retained fixture lock escaped the exact Git common directory.'
+    }
+    if (
+        [System.IO.Path]::GetFileName($resolvedPath) -cne
+            'codex-isolated-worktree-cleanup.lock'
+    ) {
+        throw 'Retained fixture lock leaf did not match the fixed cleanup lock name.'
+    }
+    if (
+        -not [System.IO.File]::Exists($resolvedPath) -or
+        [System.IO.Directory]::Exists($resolvedPath)
+    ) {
+        throw 'Retained fixture lock is not an existing regular-file candidate.'
+    }
+    $attributes = [System.IO.File]::GetAttributes($resolvedPath)
+    if (
+        ($attributes -band [System.IO.FileAttributes]::Directory) -ne 0 -or
+        ($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    ) {
+        throw 'Retained fixture lock became a directory or reparse point.'
+    }
+
+    $stream = $null
+    try {
+        # retryせずexclusive handleを1回だけ取得する。open不能やnonce不一致では
+        # handleだけを閉じ、pathは削除せずexternal recoveryへ残す。
+        $stream = [System.IO.File]::Open(
+            $resolvedPath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+        $freshLock = [pscustomobject]@{
+            Path = $resolvedPath
+            Nonce = $ExpectedNonce
+            Stream = $stream
+        }
+        $handleNonce = Get-LocalCleanupLockNonce -Lock $freshLock
+        if (
+            $null -eq $handleNonce -or
+            $handleNonce -cnotmatch '\A[0-9a-f]{32}\z' -or
+            $handleNonce -cne $ExpectedNonce -or
+            -not (Test-LocalCleanupLockOwnership -Lock $freshLock)
+        ) {
+            throw 'Retained fixture lock handle did not prove the expected owner nonce.'
+        }
+        return $freshLock
+    }
+    catch {
+        if ($null -ne $stream) {
+            $stream.Dispose()
+        }
+        throw
+    }
+}
+
 function Test-AttributesAllowRecursiveRemoval {
     param(
         [Parameter(Mandatory = $true)]
@@ -421,6 +540,38 @@ try {
     Assert-False `
         -Condition (Test-AttributesAllowRecursiveRemoval -Attributes ([System.IO.FileAttributes]::Directory -bor [System.IO.FileAttributes]::ReparsePoint)) `
         -Message 'A reparse-point directory must never enter recursive removal'
+
+    if (-not $isWindowsPlatform) {
+        # macOSのOS tempは`/var`を返す一方、Gitは`/private/var`へphysical化する。
+        # comparison-only opt-inだけがancestor symlink aliasを同一化することを固定する。
+        $pathAliasPhysicalRoot = Join-Path $testRoot 'path-alias-physical'
+        $pathAliasPhysicalChild = Join-Path $pathAliasPhysicalRoot 'child'
+        $pathAliasLink = Join-Path $testRoot 'path-alias-link'
+        $pathAliasChild = Join-Path $pathAliasLink 'child'
+        [System.IO.Directory]::CreateDirectory($pathAliasPhysicalChild) | Out-Null
+        New-Item `
+            -ItemType SymbolicLink `
+            -Path $pathAliasLink `
+            -Target $pathAliasPhysicalRoot | Out-Null
+        try {
+            Assert-False `
+                -Condition (Test-LocalCleanupPathEqual `
+                    -Left $pathAliasChild `
+                    -Right $pathAliasPhysicalChild
+                ) `
+                -Message 'Lexical path comparison must keep a symlink alias distinct'
+            Assert-True `
+                -Condition (Test-LocalCleanupPathEqual `
+                    -Left $pathAliasChild `
+                    -Right $pathAliasPhysicalChild `
+                    -ResolveExistingPhysicalIdentity
+                ) `
+                -Message 'Existing-path identity comparison must resolve an ancestor symlink alias'
+        }
+        finally {
+            Remove-Item -LiteralPath $pathAliasLink -Force
+        }
+    }
 
     # production snapshot自身がOrdinal comparerを持つことを全OSで実測する。
     # case-sensitive hostだけで再現する環境変数名の衝突をWindowsでも回帰検出できる。
@@ -2141,6 +2292,360 @@ try {
         )).Output
     Assert-Equal -Actual $guardReleaseRecoveredTip -Expected $localRecreatedOid `
         -Message 'External guard recovery must preserve the recreated branch tip'
+
+    if (-not $isWindowsPlatform) {
+        # macOSの`/var`対`/private/var`をLinuxでも再現できるよう、guard leafの
+        # 親だけをsymlink aliasにする。Gitが保持したphysical record pathを取得時に
+        # 固定し、leaf消失後はphysical再解決なしで追跡できることを検証する。
+        $stableRecordPhysicalParent = Join-Path $testRoot 'stable-record-physical'
+        $stableRecordAliasParent = Join-Path $testRoot 'stable-record-alias'
+        [System.IO.Directory]::CreateDirectory($stableRecordPhysicalParent) | Out-Null
+        New-Item `
+            -ItemType SymbolicLink `
+            -Path $stableRecordAliasParent `
+            -Target $stableRecordPhysicalParent | Out-Null
+        $hadOriginalTmpDir = Test-Path -LiteralPath 'Env:TMPDIR'
+        $originalTmpDir = if ($hadOriginalTmpDir) { $env:TMPDIR } else { $null }
+        $falseSuccessOriginalInvokeGit = $null
+        try {
+            # 取得後にraw leafだけが消えても、Git metadataとowner lockを成功扱いで
+            # 解放しない。coreのfinallyを通し、実運用と同じfail-closed経路を測る。
+            Invoke-Git -Repository $localDeleteRepository `
+                -Arguments @(
+                    'branch',
+                    'fix/local-stale-record-missing-leaf',
+                    $localExpectedHeadOid
+                ) | Out-Null
+            $missingLeafState = [pscustomobject]@{
+                Guard = $null
+                Lock = $null
+            }
+            $missingLeafHook = {
+                param($cleanupLock, $cleanupGuard)
+
+                $missingLeafState.Guard = $cleanupGuard
+                $missingLeafState.Lock = $cleanupLock
+                Assert-False `
+                    -Condition (Test-LocalCleanupPathEqual `
+                        -Left $cleanupGuard.Path `
+                        -Right $cleanupGuard.RecordPath
+                    ) `
+                    -Message 'POSIX guard fixture must preserve distinct lexical alias paths'
+                Assert-True `
+                    -Condition (Test-LocalCleanupPathEqual `
+                        -Left $cleanupGuard.Path `
+                        -Right $cleanupGuard.RecordPath `
+                        -ResolveExistingPhysicalIdentity
+                    ) `
+                    -Message 'POSIX guard fixture paths must share one existing physical identity'
+                Remove-ExactGuardFixtureDirectory `
+                    -Path $cleanupGuard.Path `
+                    -ExpectedParent $stableRecordAliasParent
+                throw 'fixture removed the exact guard leaf after stable record binding'
+            }
+            Set-ProcessEnvironmentValue -Name 'TMPDIR' -Value $stableRecordAliasParent
+            Assert-Throws `
+                -Action {
+                    Invoke-LocalBranchCleanupCore `
+                        -RepositoryPath $localDeleteRepository `
+                        -TaskSlug 'local-stale-record-missing-leaf' `
+                        -ExpectedOid $localExpectedHeadOid `
+                        -BeforeCasForTest $missingLeafHook | Out-Null
+                } `
+                -Pattern 'guard recovery failed.*fixture removed the exact guard leaf' `
+                -Message 'Missing guard leaf with stale alias metadata must fail closed'
+            if ($hadOriginalTmpDir) {
+                Set-ProcessEnvironmentValue -Name 'TMPDIR' -Value $originalTmpDir
+            } else {
+                Set-ProcessEnvironmentValue -Name 'TMPDIR' -Value $null
+            }
+            Assert-False `
+                -Condition ([System.IO.Directory]::Exists($missingLeafState.Guard.Path)) `
+                -Message 'Missing-leaf fixture must leave the exact raw guard path absent'
+            Assert-True `
+                -Condition ([System.IO.File]::Exists($missingLeafState.Lock.Path)) `
+                -Message 'Stale guard metadata must preserve the owner cleanup lock'
+            $missingLeafRecords = @(
+                Get-LocalCleanupWorktreeRecords -RepositoryPath $localDeleteRepository |
+                    Microsoft.PowerShell.Core\Where-Object {
+                        Test-LocalCleanupPathEqual `
+                            -Left $_.Path `
+                            -Right $missingLeafState.Guard.RecordPath
+                    }
+            )
+            Assert-Equal -Actual ([string]$missingLeafRecords.Count) -Expected '1' `
+                -Message 'Missing leaf must retain the exact stable Git worktree record'
+            Assert-Equal -Actual $missingLeafRecords[0].BranchRef `
+                -Expected 'refs/heads/fix/local-stale-record-missing-leaf' `
+                -Message 'Retained stable record must remain attributable to the exact branch'
+            $missingLeafTip = (Invoke-Git `
+                -Repository $localDeleteRepository `
+                -Arguments @(
+                    'rev-parse',
+                    'refs/heads/fix/local-stale-record-missing-leaf'
+                )).Output
+            Assert-Equal -Actual $missingLeafTip -Expected $localExpectedHeadOid `
+                -Message 'Missing guard leaf recovery failure must preserve the branch tip'
+            Invoke-Git -Repository $localDeleteRepository `
+                -Arguments @('worktree', 'prune', '--expire', 'now') | Out-Null
+            $missingLeafRecordsAfterPrune = @(
+                Get-LocalCleanupWorktreeRecords -RepositoryPath $localDeleteRepository |
+                    Microsoft.PowerShell.Core\Where-Object {
+                        Test-LocalCleanupPathEqual `
+                            -Left $_.Path `
+                            -Right $missingLeafState.Guard.RecordPath
+                    }
+            )
+            Assert-Equal `
+                -Actual ([string]$missingLeafRecordsAfterPrune.Count) `
+                -Expected '0' `
+                -Message 'External recovery must remove the exact stable worktree record'
+            $missingLeafBranchRecordsAfterPrune = @(
+                Get-LocalCleanupWorktreeRecords -RepositoryPath $localDeleteRepository |
+                    Microsoft.PowerShell.Core\Where-Object {
+                        $_.BranchRef -ceq
+                            'refs/heads/fix/local-stale-record-missing-leaf'
+                    }
+            )
+            Assert-Equal `
+                -Actual ([string]$missingLeafBranchRecordsAfterPrune.Count) `
+                -Expected '0' `
+                -Message 'External recovery must release the exact branch occupancy'
+            $reopenedMissingLeafLock = Open-ExactRetainedCleanupLockForFixture `
+                -Path $missingLeafState.Lock.Path `
+                -ExpectedCommonDirectory (
+                    [System.IO.Path]::GetDirectoryName($localCleanupLockPath)
+                ) `
+                -ExpectedNonce $missingLeafState.Lock.Nonce
+            Assert-True `
+                -Condition (Close-LocalCleanupLock -Lock $reopenedMissingLeafLock) `
+                -Message 'External recovery must release only the retained owner lock'
+            Assert-False `
+                -Condition ([System.IO.File]::Exists($missingLeafState.Lock.Path)) `
+                -Message 'External recovery must confirm the retained lock path is absent'
+
+            # normal removeが偽のexit 0を返してraw leafだけを消した場合も、最後の
+            # porcelain照合がstable RecordPathの残存を検知し、Released=falseにする。
+            Invoke-Git -Repository $localDeleteRepository `
+                -Arguments @(
+                    'branch',
+                    'fix/local-stale-record-false-success',
+                    $localExpectedHeadOid
+                ) | Out-Null
+            $falseSuccessLock = New-LocalCleanupLock -Path $localCleanupLockPath
+            Assert-True -Condition ($null -ne $falseSuccessLock) `
+                -Message 'False-success fixture must acquire the owner cleanup lock'
+            Set-ProcessEnvironmentValue -Name 'TMPDIR' -Value $stableRecordAliasParent
+            $falseSuccessGuard = New-LocalCleanupGuardDescriptor `
+                -BranchRef 'refs/heads/fix/local-stale-record-false-success' `
+                -TaskSlug 'local-stale-record-false-success' `
+                -Nonce $falseSuccessLock.Nonce `
+                -CommonDirectory ([System.IO.Path]::GetDirectoryName($localCleanupLockPath))
+            if ($hadOriginalTmpDir) {
+                Set-ProcessEnvironmentValue -Name 'TMPDIR' -Value $originalTmpDir
+            } else {
+                Set-ProcessEnvironmentValue -Name 'TMPDIR' -Value $null
+            }
+            Open-LocalCleanupGuardWorktree `
+                -RepositoryPath $localDeleteRepository `
+                -Guard $falseSuccessGuard
+            Assert-False `
+                -Condition (Test-LocalCleanupPathEqual `
+                    -Left $falseSuccessGuard.Path `
+                    -Right $falseSuccessGuard.RecordPath
+                ) `
+                -Message 'False-success fixture must retain distinct lexical alias paths'
+            Assert-True `
+                -Condition (Test-LocalCleanupPathEqual `
+                    -Left $falseSuccessGuard.Path `
+                    -Right $falseSuccessGuard.RecordPath `
+                    -ResolveExistingPhysicalIdentity
+                ) `
+                -Message 'False-success fixture paths must share one physical identity'
+
+            $falseSuccessOriginalInvokeGit = ${function:Invoke-LocalCleanupGit}
+            $script:FalseSuccessOriginalInvokeLocalCleanupGit =
+                $falseSuccessOriginalInvokeGit
+            $script:FalseSuccessGuardPath = $falseSuccessGuard.Path
+            $script:FalseSuccessGuardParent = $stableRecordAliasParent
+            $falseSuccessInterceptEvidence = [pscustomobject]@{
+                HitCount = 0
+                RepositoryPath = $null
+                Arguments = @()
+            }
+            $script:FalseSuccessInterceptState = $falseSuccessInterceptEvidence
+            $script:FalseSuccessExpectedRepositoryPath = [System.IO.Path]::GetFullPath(
+                $localDeleteRepository
+            )
+            Microsoft.PowerShell.Management\Set-Item `
+                -LiteralPath 'Function:Invoke-LocalCleanupGit' `
+                -Value {
+                    param(
+                        [Parameter(Mandatory = $true)]
+                        [string]$RepositoryPath,
+
+                        [Parameter(Mandatory = $true)]
+                        [string[]]$Arguments,
+
+                        [int[]]$AllowedExitCodes = @(0)
+                    )
+
+                    if (
+                        $Arguments.Count -eq 3 -and
+                        $Arguments[0] -ceq 'worktree' -and
+                        $Arguments[1] -ceq 'remove' -and
+                        (Test-LocalCleanupPathEqual `
+                            -Left $RepositoryPath `
+                            -Right $script:FalseSuccessExpectedRepositoryPath
+                        ) -and
+                        (Test-LocalCleanupPathEqual `
+                            -Left $Arguments[2] `
+                            -Right $script:FalseSuccessGuardPath
+                        )
+                    ) {
+                        $script:FalseSuccessInterceptState.HitCount++
+                        $script:FalseSuccessInterceptState.RepositoryPath =
+                            [System.IO.Path]::GetFullPath($RepositoryPath)
+                        $script:FalseSuccessInterceptState.Arguments = @($Arguments)
+                        Remove-ExactGuardFixtureDirectory `
+                            -Path $script:FalseSuccessGuardPath `
+                            -ExpectedParent $script:FalseSuccessGuardParent
+                        return [pscustomobject]@{
+                            ExitCode = 0
+                            Output = ''
+                        }
+                    }
+                    return & $script:FalseSuccessOriginalInvokeLocalCleanupGit `
+                        -RepositoryPath $RepositoryPath `
+                        -Arguments $Arguments `
+                        -AllowedExitCodes $AllowedExitCodes
+                }
+            try {
+                $falseSuccessClose = Close-LocalCleanupGuardWorktree `
+                    -RepositoryPath $localDeleteRepository `
+                    -Guard $falseSuccessGuard `
+                    -Lock $falseSuccessLock `
+                    -CasOutcomeKnown $false `
+                    -ExpectedOid $localExpectedHeadOid
+            }
+            finally {
+                Microsoft.PowerShell.Management\Set-Item `
+                    -LiteralPath 'Function:Invoke-LocalCleanupGit' `
+                    -Value $falseSuccessOriginalInvokeGit
+                Remove-Variable `
+                    -Name @(
+                        'FalseSuccessOriginalInvokeLocalCleanupGit',
+                        'FalseSuccessGuardPath',
+                        'FalseSuccessGuardParent',
+                        'FalseSuccessInterceptState',
+                        'FalseSuccessExpectedRepositoryPath'
+                    ) `
+                    -Scope Script `
+                    -ErrorAction SilentlyContinue
+                $falseSuccessOriginalInvokeGit = $null
+            }
+            Assert-Equal `
+                -Actual ([string]$falseSuccessInterceptEvidence.HitCount) `
+                -Expected '1' `
+                -Message 'False-success shim must intercept exactly one normal removal'
+            Assert-Equal `
+                -Actual $falseSuccessInterceptEvidence.RepositoryPath `
+                -Expected ([System.IO.Path]::GetFullPath($localDeleteRepository)) `
+                -Message 'False-success shim must intercept only the exact fixture repository'
+            Assert-Equal `
+                -Actual ([string]$falseSuccessInterceptEvidence.Arguments.Count) `
+                -Expected '3' `
+                -Message 'False-success shim must capture one exact three-argument command'
+            Assert-Equal `
+                -Actual $falseSuccessInterceptEvidence.Arguments[0] `
+                -Expected 'worktree' `
+                -Message 'False-success shim must intercept only a worktree command'
+            Assert-Equal `
+                -Actual $falseSuccessInterceptEvidence.Arguments[1] `
+                -Expected 'remove' `
+                -Message 'False-success shim must intercept only normal worktree removal'
+            Assert-Equal `
+                -Actual $falseSuccessInterceptEvidence.Arguments[2] `
+                -Expected $falseSuccessGuard.Path `
+                -Message 'False-success shim must intercept only the exact raw guard path'
+            Assert-False -Condition $falseSuccessClose.Released `
+                -Message 'False-success remove must not release a stale Git record'
+            Assert-Equal -Actual $falseSuccessClose.Reason `
+                -Expected 'guard path or metadata remained after normal worktree removal' `
+                -Message 'Final stable-record check must report remaining metadata'
+            Assert-False `
+                -Condition ([System.IO.Directory]::Exists($falseSuccessGuard.Path)) `
+                -Message 'False-success proxy must remove only the exact raw guard leaf'
+            $falseSuccessRecords = @(
+                Get-LocalCleanupWorktreeRecords -RepositoryPath $localDeleteRepository |
+                    Microsoft.PowerShell.Core\Where-Object {
+                        Test-LocalCleanupPathEqual `
+                            -Left $_.Path `
+                            -Right $falseSuccessGuard.RecordPath
+                    }
+            )
+            Assert-Equal -Actual ([string]$falseSuccessRecords.Count) -Expected '1' `
+                -Message 'False-success remove must leave the stable Git record observable'
+            Assert-True -Condition ([System.IO.File]::Exists($falseSuccessLock.Path)) `
+                -Message 'False-success close must preserve the owner lock'
+            Invoke-Git -Repository $localDeleteRepository `
+                -Arguments @('worktree', 'prune', '--expire', 'now') | Out-Null
+            $falseSuccessRecordsAfterPrune = @(
+                Get-LocalCleanupWorktreeRecords -RepositoryPath $localDeleteRepository |
+                    Microsoft.PowerShell.Core\Where-Object {
+                        Test-LocalCleanupPathEqual `
+                            -Left $_.Path `
+                            -Right $falseSuccessGuard.RecordPath
+                    }
+            )
+            Assert-Equal `
+                -Actual ([string]$falseSuccessRecordsAfterPrune.Count) `
+                -Expected '0' `
+                -Message 'False-success recovery must remove the stable worktree record'
+            $falseSuccessBranchRecordsAfterPrune = @(
+                Get-LocalCleanupWorktreeRecords -RepositoryPath $localDeleteRepository |
+                    Microsoft.PowerShell.Core\Where-Object {
+                        $_.BranchRef -ceq
+                            'refs/heads/fix/local-stale-record-false-success'
+                    }
+            )
+            Assert-Equal `
+                -Actual ([string]$falseSuccessBranchRecordsAfterPrune.Count) `
+                -Expected '0' `
+                -Message 'False-success recovery must release exact branch occupancy'
+            Assert-True `
+                -Condition (Close-LocalCleanupLock -Lock $falseSuccessLock) `
+                -Message 'External false-success recovery must release only its owner lock'
+            Assert-False `
+                -Condition ([System.IO.File]::Exists($falseSuccessLock.Path)) `
+                -Message 'False-success recovery must confirm the owner lock path is absent'
+        }
+        finally {
+            if ($null -ne $falseSuccessOriginalInvokeGit) {
+                Microsoft.PowerShell.Management\Set-Item `
+                    -LiteralPath 'Function:Invoke-LocalCleanupGit' `
+                    -Value $falseSuccessOriginalInvokeGit
+            }
+            if ($hadOriginalTmpDir) {
+                Set-ProcessEnvironmentValue -Name 'TMPDIR' -Value $originalTmpDir
+            } else {
+                Set-ProcessEnvironmentValue -Name 'TMPDIR' -Value $null
+            }
+            if ([System.IO.Directory]::Exists($stableRecordAliasParent)) {
+                Remove-Item -LiteralPath $stableRecordAliasParent -Force
+            }
+            Remove-Variable `
+                -Name @(
+                    'FalseSuccessOriginalInvokeLocalCleanupGit',
+                    'FalseSuccessGuardPath',
+                    'FalseSuccessGuardParent',
+                    'FalseSuccessInterceptState',
+                    'FalseSuccessExpectedRepositoryPath'
+                ) `
+                -Scope Script `
+                -ErrorAction SilentlyContinue
+        }
+    }
 
     # active/stale/ownership不一致のlockは推測して削除せず、nonblockingで拒否して
     # branchを保持する。ownerだけがfinallyでnonce一致を確認してreleaseする。

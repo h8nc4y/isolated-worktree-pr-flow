@@ -326,13 +326,16 @@ interleaved checkout, ordinary add/switch blocking while the guard is held,
   refusal, pre-CAS ref drift, targeted same-nonce config drift, standard
   config-writer blocking, configless-to-config race refusal, pre-existing,
    reparse, descriptor-drift, and content-drift config locks, post-CAS same-name
-	   branch recreation, ambient alias/function replacement refusal, exact guard cleanup refusal on unexpected entries,
+	 branch recreation, ambient alias/function replacement refusal, exact guard cleanup refusal on unexpected entries,
   ambient Git redirect isolation, active/stale/owner-mismatched cleanup locks,
 observation-to-rename config drift, explicit pre-CAS owner-config recovery
 conflict, task-slug/OID trailing-LF rejection, and remote expected-OID lease
 behavior without using GitHub, credentials, or a real repository. The
-	   current fixture exposes 211 assertions under both
-PowerShell 7 and Windows PowerShell 5.1. Each Git invocation ignores
+	   Windows fixture exposes 211 assertions under both
+PowerShell 7 and Windows PowerShell 5.1. POSIX-only coverage adds ancestor
+symlink alias binding, missing guard leaves with retained Git metadata, and a
+false-success removal result whose final record still remains; the local Linux
+fixture exposes 243 assertions. Each Git invocation ignores
 system/global configuration, signing, hooks, and
 `rebase.updateRefs`; it snapshots and clears every ambient `GIT_*` variable
 before setting only its isolated config and non-interactive prompt policy.
@@ -341,6 +344,12 @@ case-sensitive hosts. This prevents repository/index/object redirection and
 trace output to caller-selected paths, including future Git variables not yet
 known to the test. Recursive cleanup requires an OS-aware, direct GUID-named
 child of the temporary directory and rejects reparse points.
+
+Guard acquisition resolves physical identity only while both the controlled
+path and Git's porcelain record exist. It then stores Git's normalized lexical
+record path as the stable identity for every later invariant and release
+check. This accepts macOS `/var` and `/private/var` aliases without treating a
+missing guard leaf or stale metadata as a successful release.
 
 Readiness validation treats `scripts/remove-local-branch-cas.ps1` as a
 closed-world reviewed artifact. It normalizes only CRLF or lone CR to LF,

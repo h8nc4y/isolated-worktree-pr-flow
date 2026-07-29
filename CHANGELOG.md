@@ -32,9 +32,11 @@ The format loosely follows Keep a Changelog conventions.
    locks, owner-nonce mismatch, observation-to-rename config drift, explicit
    pre-CAS owner-config recovery conflict, trailing-LF input rejection, and
    external guard/lock/config
-    recovery, plus ambient alias and function-replacement refusal. The
-    PowerShell 7 and Windows PowerShell 5.1 fixture currently exposes 211
-    assertions.
+    recovery, plus ambient alias and function-replacement refusal. The Windows
+    PowerShell 7 and Windows PowerShell 5.1 fixture exposes 211 assertions.
+    POSIX-only cases cover ancestor symlink aliases, a missing guard leaf with
+    stale Git metadata, and false-success removal with a remaining final
+    record; the local Linux fixture exposes 243 assertions.
 
 ### Changed
 
@@ -76,6 +78,11 @@ The format loosely follows Keep a Changelog conventions.
   branch still equals the expected OID, with complete owner-state
   revalidation. Unexpected entries or recovery failures preserve the guard
   and lock without a fallback branch deletion.
+  On POSIX, acquisition resolves physical identity only while both paths
+  exist, then stores Git's normalized lexical worktree-record path as the
+  stable identity for all later checks. macOS `/var` and `/private/var`
+  aliases therefore bind once, while a missing leaf or stale record remains
+  fail closed during recovery and final release.
 - Replaced the open-world cleanup-helper AST deny/allow lists and mutation
   catalog with one LF-normalized, UTF-8-no-BOM SHA-256 closed-world
   fingerprint. Parse success, the ordered 30 top-level functions, destructive

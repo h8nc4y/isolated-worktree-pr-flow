@@ -19,15 +19,16 @@
   module-qualified resolverを生成してclosureへ渡すため、CI wrapperのchild script
   scopeでもfunction identityを解決できる。dot-source/test hookはtrusted harnessであり、
   敵対的な同一runspace非同期mutationは保証外とする。
-- disposable local fixtureはPowerShell 7 / Windows PowerShell 5.1で各211
-  assertionsを持つ。
+- disposable local fixtureはWindowsのPowerShell 7 / Windows PowerShell 5.1で
+  各211 assertions、local LinuxのPowerShell 7で243 assertionsを持つ。
   既存・interleaved checkout、通常add/switchのguard拒否、config観測→rename
   drift、config付きbranchのCAS拒否、同nonce config writer、CAS直前drift、
   CAS後の同名branch再作成、予期しないguard entry、ambient Git redirect、
   active/stale cleanup lock、nonce不一致、標準config writer排他、
   configless→config race、既存/reparse/path/content drift config lock、
-  CAS前のowner config回復競合、ambient alias / function差替えを
-  fail closedで固定した。
+  CAS前のowner config回復競合、ambient alias / function差替えに加え、
+  POSIX ancestor symlink alias、guard leaf消失後のstale Git metadata、
+  remove偽成功後の最終record残存をfail closedで固定した。
 - 独立reviewは、worktree/config race、ambient Git routing、CAS直前の
   checkout race（P1）、validatorのcondition/body false-greenと二次回復失敗（P2）、
   case-sensitive環境snapshot（P2）、task slugのregex注入（P3）を検出した。
@@ -45,10 +46,16 @@
   old/new digestを同じreviewで確認する。
   直前freezeの独立reviewはclearした。PR #18の初回3 CIは、Actions temp wrapperが
   test scriptを通常callするchild scopeからclosureがfunctionを解決できず失敗した。
-  同じscopeをlocalで再現し、caller-scope resolverで修正した。helper-only reviewはclearし、
-  normalized baselineを`cd9238e...d8972`へ更新した。最終freeze reviewは未確認。
-- resolver修正後のcleanup guardsはnested/directのPowerShell 7 / 5.1で各211
-  assertions成功。正規logical slot内で両hostの
+  同じscopeをlocalで再現し、caller-scope resolverで修正した。続くCIではWindows /
+  Ubuntuが成功した一方、macOSのOS temp `/var`とGit record `/private/var`のaliasを
+  lexical mismatchとして拒否した。取得時に既存pathのphysical identityを一度だけ
+  照合し、Gitのnormalized lexical record pathをstable identityとして保存するよう
+  修正した。leaf消失後と最終releaseでは保存済みidentityをlexicalに追跡する。
+  helper security reviewとtest-only外部回復fixtureの静的reviewはclear。
+  normalized baselineは`cd9238e...d8972`から`a685f41e...03d1cc`へ更新した。
+  最終freeze reviewは未確認。
+- current cleanup guardsはnested/directのPowerShell 7 / 5.1で各211
+  assertions、Linux containerで243 assertions成功。正規logical slot内で両hostの
   private-marker self-testとrepository scanも成功した。Gitleaksはcustom global-hook
   configによるworktree/history scanが成功し、Semgrep固定ruleの対象source変更は0件。
   fresh child processのCLI smokeは、fixture/processを作る前にexecution policyで拒否された。

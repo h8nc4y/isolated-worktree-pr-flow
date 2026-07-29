@@ -558,7 +558,9 @@ function Test-LocalCleanupPathEqual {
         [string]$Left,
 
         [Parameter(Mandatory = $true)]
-        [string]$Right
+        [string]$Right,
+
+        [switch]$ResolveExistingPhysicalIdentity
     )
 
     $comparison = if (
@@ -568,12 +570,67 @@ function Test-LocalCleanupPathEqual {
     } else {
         [System.StringComparison]::Ordinal
     }
+    $resolvedLeft = [System.IO.Path]::GetFullPath($Left)
+    $resolvedRight = [System.IO.Path]::GetFullPath($Right)
+
+    if (
+        $ResolveExistingPhysicalIdentity -and
+        [Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT
+    ) {
+        try {
+            $physicalIdentities = @()
+            foreach ($candidatePath in @($resolvedLeft, $resolvedRight)) {
+                # lexical pathはGit操作・confinementへそのまま残す。比較時だけ既存segmentを
+                # physical targetへ辿り、macOSのsystem `/var` aliasを`/private/var`と同一化する。
+                if (
+                    -not [System.IO.Directory]::Exists($candidatePath) -and
+                    -not [System.IO.File]::Exists($candidatePath)
+                ) {
+                    return $false
+                }
+                $pathRoot = [System.IO.Path]::GetPathRoot($candidatePath)
+                $physicalPath = $pathRoot
+                $relativePath = $candidatePath.Substring($pathRoot.Length)
+                $segments = $relativePath.Split(
+                    [char[]]@(
+                        [System.IO.Path]::DirectorySeparatorChar,
+                        [System.IO.Path]::AltDirectorySeparatorChar
+                    ),
+                    [System.StringSplitOptions]::RemoveEmptyEntries
+                )
+                foreach ($segment in $segments) {
+                    $nextPath = [System.IO.Path]::Combine($physicalPath, $segment)
+                    $pathInfo = if ([System.IO.Directory]::Exists($nextPath)) {
+                        [System.IO.DirectoryInfo]::new($nextPath)
+                    } elseif ([System.IO.File]::Exists($nextPath)) {
+                        [System.IO.FileInfo]::new($nextPath)
+                    } else {
+                        return $false
+                    }
+                    $linkTarget = $pathInfo.ResolveLinkTarget($true)
+                    $physicalPath = if ($null -ne $linkTarget) {
+                        $linkTarget.FullName
+                    } else {
+                        $pathInfo.FullName
+                    }
+                }
+                $physicalIdentities += [System.IO.Path]::GetFullPath($physicalPath)
+            }
+            $resolvedLeft = $physicalIdentities[0]
+            $resolvedRight = $physicalIdentities[1]
+        }
+        catch {
+            # loop、missing target、解決不能pathは同一と推測せずfail closedにする。
+            return $false
+        }
+    }
+
     return [string]::Equals(
-        [System.IO.Path]::GetFullPath($Left).TrimEnd(
+        $resolvedLeft.TrimEnd(
             [System.IO.Path]::DirectorySeparatorChar,
             [System.IO.Path]::AltDirectorySeparatorChar
         ),
-        [System.IO.Path]::GetFullPath($Right).TrimEnd(
+        $resolvedRight.TrimEnd(
             [System.IO.Path]::DirectorySeparatorChar,
             [System.IO.Path]::AltDirectorySeparatorChar
         ),
@@ -892,6 +949,7 @@ function New-LocalCleanupGuardDescriptor {
 
     return [pscustomobject]@{
         Path = $guardPath
+        RecordPath = $null
         BranchRef = $BranchRef
         ShortBranch = "fix/$TaskSlug"
         CommonDirectory = [System.IO.Path]::GetFullPath($CommonDirectory)
@@ -992,11 +1050,18 @@ function Test-LocalCleanupGuardInvariant {
         [object]$Guard
     )
 
+    # acquisition時にGit porcelainから確定したlexical record pathを以後の
+    # stable identityにする。leaf消失後にphysical解決へfallbackしてはならない。
+    if ([string]::IsNullOrWhiteSpace([string]$Guard.RecordPath)) {
+        return $false
+    }
     $records = @(Get-LocalCleanupWorktreeRecords -RepositoryPath $RepositoryPath)
     $pathRecords = @(
         $records |
             Microsoft.PowerShell.Core\Where-Object {
-                Test-LocalCleanupPathEqual -Left $_.Path -Right $Guard.Path
+                Test-LocalCleanupPathEqual `
+                    -Left $_.Path `
+                    -Right $Guard.RecordPath
             }
     )
     $branchRecords = @(
@@ -1006,6 +1071,11 @@ function Test-LocalCleanupGuardInvariant {
             }
     )
     return (
+        (Test-LocalCleanupPathEqual `
+            -Left $Guard.Path `
+            -Right $Guard.RecordPath `
+            -ResolveExistingPhysicalIdentity
+        ) -and
         $pathRecords.Count -eq 1 -and
         $branchRecords.Count -eq 1 -and
         $pathRecords[0].BranchRef -ceq $Guard.BranchRef -and
@@ -1046,6 +1116,38 @@ function Open-LocalCleanupGuardWorktree {
         throw 'Guard worktree could not acquire exclusive branch occupancy.'
     }
     $Guard.Acquired = $true
+
+    # pathが存在する取得直後だけphysical identityを使い、macOSの`/var`と
+    # Gitが返す`/private/var`を一意に結び付ける。確定後はGitのlexical pathを
+    # 保存し、leafが消えてもstale metadataを同じidentityで追跡する。
+    $records = @(Get-LocalCleanupWorktreeRecords -RepositoryPath $RepositoryPath)
+    $pathRecords = @(
+        $records |
+            Microsoft.PowerShell.Core\Where-Object {
+                Test-LocalCleanupPathEqual `
+                    -Left $_.Path `
+                    -Right $Guard.Path `
+                    -ResolveExistingPhysicalIdentity
+            }
+    )
+    $branchRecords = @(
+        $records |
+            Microsoft.PowerShell.Core\Where-Object {
+                $_.BranchRef -ceq $Guard.BranchRef
+            }
+    )
+    if (
+        $pathRecords.Count -ne 1 -or
+        $branchRecords.Count -ne 1 -or
+        $pathRecords[0].BranchRef -cne $Guard.BranchRef -or
+        -not (Test-LocalCleanupPathEqual `
+            -Left $pathRecords[0].Path `
+            -Right $branchRecords[0].Path
+        )
+    ) {
+        throw 'Guard worktree did not bind a unique Git record to the fully-qualified branch ref.'
+    }
+    $Guard.RecordPath = $pathRecords[0].Path
     if (-not (Test-LocalCleanupGuardInvariant `
         -RepositoryPath $RepositoryPath `
         -Guard $Guard
@@ -1083,21 +1185,69 @@ function Close-LocalCleanupGuardWorktree {
         # custom owner lockを失った場合はnative occupancyも保持し、外部回復へ渡す。
         Assert-LocalCleanupLockOwnership -Lock $Lock
         $records = @(Get-LocalCleanupWorktreeRecords -RepositoryPath $RepositoryPath)
+        $hasStableRecordPath = -not [string]::IsNullOrWhiteSpace(
+            [string]$Guard.RecordPath
+        )
+        if ($Guard.Acquired -and -not $hasStableRecordPath) {
+            return [pscustomobject]@{
+                Released = $false
+                Reason = 'acquired guard has no stable Git worktree record identity'
+            }
+        }
         $pathRecords = @(
-            $records |
-                Microsoft.PowerShell.Core\Where-Object {
-                    Test-LocalCleanupPathEqual -Left $_.Path -Right $Guard.Path
-                }
+            if ($hasStableRecordPath) {
+                $records |
+                    Microsoft.PowerShell.Core\Where-Object {
+                        Test-LocalCleanupPathEqual `
+                            -Left $_.Path `
+                            -Right $Guard.RecordPath
+                    }
+            } else {
+                # add拒否時はGit record identityを取得できない。expected guard leafと
+                # 同名のrecordだけをpartial acquisitionとして扱い、推測削除せず保持する。
+                $temporaryParent = [System.IO.Path]::GetFullPath(
+                    [System.IO.Path]::GetTempPath()
+                )
+                $records |
+                    Microsoft.PowerShell.Core\Where-Object {
+                        $recordLeafPath = [System.IO.Path]::Combine(
+                            $temporaryParent,
+                            [System.IO.Path]::GetFileName($_.Path)
+                        )
+                        Test-LocalCleanupPathEqual `
+                            -Left $recordLeafPath `
+                            -Right $Guard.Path
+                    }
+            }
         )
         if ($pathRecords.Count -eq 0) {
             $absent = (
                 -not [System.IO.File]::Exists($Guard.Path) -and
                 -not [System.IO.Directory]::Exists($Guard.Path)
             )
+            $branchRecords = @(
+                $records |
+                    Microsoft.PowerShell.Core\Where-Object {
+                        $_.BranchRef -ceq $Guard.BranchRef
+                    }
+            )
+            $released = (
+                $absent -and
+                (
+                    -not $hasStableRecordPath -or
+                    $branchRecords.Count -eq 0
+                )
+            )
             return [pscustomobject]@{
-                Released = $absent
-                Reason = if ($absent) {
+                Released = $released
+                Reason = if ($released) {
                     'guard add failed without creating path or metadata'
+                } elseif (
+                    $hasStableRecordPath -and
+                    $absent -and
+                    $branchRecords.Count -gt 0
+                ) {
+                    'stable guard record disappeared while its branch remained occupied'
                 } else {
                     'guard path exists without an attributable worktree record'
                 }
@@ -1160,7 +1310,9 @@ function Close-LocalCleanupGuardWorktree {
         $remainingRecords = @(
             Get-LocalCleanupWorktreeRecords -RepositoryPath $RepositoryPath |
                 Microsoft.PowerShell.Core\Where-Object {
-                    Test-LocalCleanupPathEqual -Left $_.Path -Right $Guard.Path
+                    Test-LocalCleanupPathEqual `
+                        -Left $_.Path `
+                        -Right $Guard.RecordPath
                 }
         )
         $released = (
